@@ -1,25 +1,49 @@
-
 services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        PHP_VERSION: "8.5"
+    image: orun-api-v2:latest
+    environment:
+      APP_ENV: ${APP_ENV:-prod}
+      APP_DEBUG: ${APP_DEBUG:-0}
+      APP_SECRET: ${APP_SECRET}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-orun}:${POSTGRES_PASSWORD:-orun}@database:5432/${POSTGRES_DB:-orun}?serverVersion=${POSTGRES_VERSION:-16}&charset=utf8
+      JWT_PASSPHRASE: ${JWT_PASSPHRASE}
+      SERVER_NAME: ${SERVER_NAME:-localhost}
+      CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN:-^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$}
+    volumes:
+      - jwt_keys:/app/config/jwt
+      - app_uploads:/app/var/uploads
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: unless-stopped
+
 ###> doctrine/doctrine-bundle ###
   database:
     image: postgres:${POSTGRES_VERSION:-16}-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-app}
-      # You should definitely change the password in production
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-!ChangeMe!}
-      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-orun}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orun}
+      POSTGRES_USER: ${POSTGRES_USER:-orun}
     healthcheck:
-      test: ["CMD", "pg_isready", "-d", "${POSTGRES_DB:-app}", "-U", "${POSTGRES_USER:-app}"]
+      test: ["CMD", "pg_isready", "-d", "${POSTGRES_DB:-orun}", "-U", "${POSTGRES_USER:-orun}"]
       timeout: 5s
       retries: 5
       start_period: 60s
     volumes:
       - database_data:/var/lib/postgresql/data:rw
-      # You may use a bind-mounted host directory instead, so that it is harder to accidentally remove the volume and lose all your data!
-      # - ./docker/db/data:/var/lib/postgresql/data:rw
 ###< doctrine/doctrine-bundle ###
 
 volumes:
 ###> doctrine/doctrine-bundle ###
   database_data:
 ###< doctrine/doctrine-bundle ###
+  jwt_keys:
+  app_uploads:

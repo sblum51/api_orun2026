@@ -1,0 +1,37 @@
+# Symfony
+/.env.*.local
+/.env.local
+/.env.local.php
+/var/
+/vendor/
+/public/bundles/
+/public/media/cache/
+
+# Composer
+/.composer/
+
+# Dev tools
+/.phpunit.result.cache
+/phpunit.xml
+/.php-cs-fixer.cache
+/phpstan-baseline.neon.bak
+
+# Git / IDE
+/.git/
+/.gitignore
+/.gitattributes
+/.idea/
+/.vscode/
+/.fleet/
+
+# Tests in image
+/tests/
+/phpunit.dist.xml
+/phpstan.dist.neon
+/.php-cs-fixer.dist.php
+
+# Misc
+/.DS_Store
+**/*.log
+README.md
+UPGRADE.md

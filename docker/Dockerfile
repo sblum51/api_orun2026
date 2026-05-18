@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1
+
+ARG PHP_VERSION=8.5
+ARG FRANKENPHP_VERSION=1
+ARG COMPOSER_VERSION=2
+
+# -------- composer image (just to grab the binary) --------
+FROM composer:${COMPOSER_VERSION} AS composer_bin
+
+# -------- base FrankenPHP image (shared between stages) --------
+FROM dunglas/frankenphp:${FRANKENPHP_VERSION}-php${PHP_VERSION}-bookworm AS base
+
+ARG APCU_VERSION=5.1.24
+
+WORKDIR /app
+
+RUN install-php-extensions \
+    intl \
+    opcache \
+    pdo_pgsql \
+    zip \
+    gd \
+    apcu-${APCU_VERSION} \
+  && rm -rf /var/cache/apt/* /var/lib/apt/lists/*
+
+COPY --from=composer_bin /usr/bin/composer /usr/bin/composer
+
+ENV COMPOSER_ALLOW_SUPERUSER=1 \
+    COMPOSER_NO_INTERACTION=1 \
+    APP_ENV=prod \
+    APP_DEBUG=0 \
+    PHP_INI_SCAN_DIR="$PHP_INI_DIR/conf.d"
+
+COPY docker/php.ini "$PHP_INI_DIR/conf.d/zz-orun.ini"
+COPY docker/Caddyfile /etc/caddy/Caddyfile
+
+# -------- vendor stage (cached layer) --------
+FROM base AS vendor
+
+COPY composer.json composer.lock symfony.lock ./
+RUN --mount=type=cache,target=/root/.composer/cache \
+    composer install \
+      --no-dev \
+      --no-scripts \
+      --no-autoloader \
+      --prefer-dist \
+      --classmap-authoritative
+
+# -------- final production image --------
+FROM base AS prod
+
+COPY --from=vendor /app/vendor ./vendor
+COPY . .
+
+RUN --mount=type=cache,target=/root/.composer/cache \
+    composer dump-autoload --classmap-authoritative --no-dev \
+  && composer run-script post-install-cmd --no-dev
+
+RUN mkdir -p var/cache var/log \
+  && chown -R www-data:www-data var \
+  && chmod -R u+rwX,g+rwX var
+
+EXPOSE 80 443 443/udp
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
+  CMD curl -fsS http://localhost:2019/metrics > /dev/null || exit 1
+
+USER www-data
