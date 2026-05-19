@@ -32,6 +32,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-orun}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orun}
       POSTGRES_USER: ${POSTGRES_USER:-orun}
+    # Host port mapping is defined in compose.override.yaml (dev) for local access.
     healthcheck:
       test: ["CMD", "pg_isready", "-d", "${POSTGRES_DB:-orun}", "-U", "${POSTGRES_USER:-orun}"]
       timeout: 5s
