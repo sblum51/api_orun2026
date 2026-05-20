@@ -1,0 +1,6 @@
+auth_login:
+    path: /auth/login
+    methods: [POST]
+    defaults:
+        # Handled by the json_login firewall — no controller needed.
+        _controller: null
