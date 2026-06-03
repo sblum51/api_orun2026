@@ -1,0 +1,6 @@
+gesdinet_jwt_refresh_token:
+    # The route just needs to exist so Symfony's router matches the path.
+    # The refresh_jwt firewall (configured in security.yaml) intercepts the
+    # request via the authenticator before any controller would be reached.
+    path: /auth/token/refresh
+    methods: [POST]

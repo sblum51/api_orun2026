@@ -20,6 +20,12 @@ doctrine:
                 dir: '%kernel.project_dir%/src/Entity'
                 prefix: 'App\Entity'
                 alias: App
+            gesdinet:
+                type: xml
+                is_bundle: false
+                dir: '%kernel.project_dir%/vendor/gesdinet/jwt-refresh-token-bundle/config/doctrine'
+                prefix: 'Gesdinet\JWTRefreshTokenBundle\Entity'
+                alias: GesdinetJWTRefreshToken
 
 when@test:
     doctrine:
