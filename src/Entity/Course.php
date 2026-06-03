@@ -4,18 +4,45 @@ declare(strict_types=1);
 
 namespace App\Entity;
 
+use ApiPlatform\Metadata\ApiResource;
+use ApiPlatform\Metadata\Delete;
+use ApiPlatform\Metadata\Get;
+use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\Patch;
+use ApiPlatform\Metadata\Post;
 use App\Entity\Trait\IdentifiableTrait;
 use App\Entity\Trait\TimestampableTrait;
 use App\Enum\CourseType;
+use App\Enum\Visibility;
 use App\Repository\CourseRepository;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
+use Symfony\Component\Serializer\Attribute\Groups;
 use Symfony\Component\Validator\Constraints as Assert;
 
 #[ORM\Entity(repositoryClass: CourseRepository::class)]
 #[ORM\Table(name: 'courses')]
 #[ORM\HasLifecycleCallbacks]
+#[ApiResource(
+    operations: [
+        new GetCollection(),
+        new Get(),
+        new Post(
+            security: "is_granted('ROLE_USER')",
+            securityPostDenormalize: "is_granted('manage', object.getEvent().getOrganization())",
+            securityPostDenormalizeMessage: 'You can only create courses in an event of an organization you manage.',
+        ),
+        new Patch(
+            security: "is_granted('manage', object.getEvent().getOrganization())",
+        ),
+        new Delete(
+            security: "is_granted('manage', object.getEvent().getOrganization())",
+        ),
+    ],
+    normalizationContext: ['groups' => ['course:read']],
+    denormalizationContext: ['groups' => ['course:write']],
+)]
 class Course
 {
     use IdentifiableTrait;
@@ -23,21 +50,30 @@ class Course
 
     #[ORM\Column(type: 'string', length: 100)]
     #[Assert\NotBlank]
+    #[Groups(['course:read', 'course:write'])]
     private string $name;
 
     #[ORM\Column(type: 'string', length: 30, enumType: CourseType::class)]
+    #[Groups(['course:read', 'course:write'])]
     private CourseType $type;
+
+    #[ORM\Column(type: 'string', length: 20, enumType: Visibility::class)]
+    #[Groups(['course:read', 'course:write'])]
+    private Visibility $visibility = Visibility::Public;
 
     #[ORM\Column(type: 'integer', nullable: true)]
     #[Assert\PositiveOrZero]
+    #[Groups(['course:read', 'course:write'])]
     private ?int $durationLimitMin = null;
 
     #[ORM\Column(type: 'decimal', precision: 6, scale: 2, nullable: true)]
     #[Assert\PositiveOrZero]
+    #[Groups(['course:read', 'course:write'])]
     private ?string $distanceKm = null;
 
     #[ORM\ManyToOne(targetEntity: Event::class, inversedBy: 'courses')]
     #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
+    #[Groups(['course:read', 'course:write'])]
     private Event $event;
 
     /**
@@ -74,6 +110,16 @@ class Course
     public function setType(CourseType $type): void
     {
         $this->type = $type;
+    }
+
+    public function getVisibility(): Visibility
+    {
+        return $this->visibility;
+    }
+
+    public function setVisibility(Visibility $visibility): void
+    {
+        $this->visibility = $visibility;
     }
 
     public function getDurationLimitMin(): ?int

@@ -10,6 +10,14 @@
          bootstrap="tests/bootstrap.php"
          cacheDirectory=".phpunit.cache"
 >
+    <!--
+        DAMADoctrineTestBundle's PHPUnit extension is not yet compatible with
+        PHPUnit 13 (dama/doctrine-test-bundle ^8.6 supports PHPUnit <= 12).
+        Without it, zenstruck/foundry resets the database before each test, which
+        keeps tests isolated (just a little slower). Re-enable the extension once
+        a PHPUnit 13 compatible DAMA release is available.
+    -->
+
     <php>
         <ini name="display_errors" value="1" />
         <ini name="error_reporting" value="-1" />

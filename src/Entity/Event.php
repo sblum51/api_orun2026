@@ -4,17 +4,45 @@ declare(strict_types=1);
 
 namespace App\Entity;
 
+use ApiPlatform\Metadata\ApiResource;
+use ApiPlatform\Metadata\Delete;
+use ApiPlatform\Metadata\Get;
+use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\Patch;
+use ApiPlatform\Metadata\Post;
 use App\Entity\Trait\IdentifiableTrait;
 use App\Entity\Trait\TimestampableTrait;
+use App\Enum\EventType;
+use App\Enum\Visibility;
 use App\Repository\EventRepository;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
+use Symfony\Component\Serializer\Attribute\Groups;
 use Symfony\Component\Validator\Constraints as Assert;
 
 #[ORM\Entity(repositoryClass: EventRepository::class)]
 #[ORM\Table(name: 'events')]
 #[ORM\HasLifecycleCallbacks]
+#[ApiResource(
+    operations: [
+        new GetCollection(),
+        new Get(),
+        new Post(
+            security: "is_granted('ROLE_USER')",
+            securityPostDenormalize: "is_granted('manage', object.getOrganization())",
+            securityPostDenormalizeMessage: 'You can only create events in an organization you manage.',
+        ),
+        new Patch(
+            security: "is_granted('manage', object.getOrganization())",
+        ),
+        new Delete(
+            security: "is_granted('manage', object.getOrganization())",
+        ),
+    ],
+    normalizationContext: ['groups' => ['event:read']],
+    denormalizationContext: ['groups' => ['event:write']],
+)]
 class Event
 {
     use IdentifiableTrait;
@@ -22,30 +50,49 @@ class Event
 
     #[ORM\Column(type: 'string', length: 200)]
     #[Assert\NotBlank]
+    #[Groups(['event:read', 'event:write'])]
     private string $name;
 
     #[ORM\Column(type: 'string', length: 210, unique: true)]
     #[Assert\NotBlank]
     #[Assert\Regex('/^[a-z0-9\-]+$/')]
+    #[Groups(['event:read', 'event:write'])]
     private string $slug;
 
     #[ORM\Column(type: 'text', nullable: true)]
+    #[Groups(['event:read', 'event:write'])]
     private ?string $description = null;
 
-    #[ORM\Column(type: 'date_immutable')]
-    private \DateTimeImmutable $startDate;
+    #[ORM\Column(type: 'string', length: 20, enumType: EventType::class)]
+    #[Groups(['event:read', 'event:write'])]
+    private EventType $type = EventType::Temporal;
 
-    #[ORM\Column(type: 'date_immutable')]
-    private \DateTimeImmutable $endDate;
+    #[ORM\Column(type: 'string', length: 20, enumType: Visibility::class)]
+    #[Groups(['event:read', 'event:write'])]
+    private Visibility $visibility = Visibility::Public;
+
+    /**
+     * Required for Temporal events; optional for Permanent/Seasonal.
+     */
+    #[ORM\Column(type: 'date_immutable', nullable: true)]
+    #[Groups(['event:read', 'event:write'])]
+    private ?\DateTimeImmutable $startDate = null;
+
+    #[ORM\Column(type: 'date_immutable', nullable: true)]
+    #[Groups(['event:read', 'event:write'])]
+    private ?\DateTimeImmutable $endDate = null;
 
     #[ORM\Column(type: 'string', length: 200, nullable: true)]
+    #[Groups(['event:read', 'event:write'])]
     private ?string $location = null;
 
     #[ORM\Column(type: 'boolean')]
+    #[Groups(['event:read', 'event:write'])]
     private bool $published = false;
 
     #[ORM\ManyToOne(targetEntity: Organization::class)]
     #[ORM\JoinColumn(nullable: false, onDelete: 'RESTRICT')]
+    #[Groups(['event:read', 'event:write'])]
     private Organization $organization;
 
     /**
@@ -60,16 +107,34 @@ class Event
     #[ORM\OneToMany(mappedBy: 'event', targetEntity: Control::class, cascade: ['remove'])]
     private Collection $controls;
 
-    public function __construct(string $name, string $slug, Organization $organization, \DateTimeImmutable $startDate, \DateTimeImmutable $endDate)
+    public function __construct(string $name, string $slug, EventType $type = EventType::Temporal)
     {
         $this->initializeUuid();
         $this->name = $name;
         $this->slug = $slug;
-        $this->organization = $organization;
-        $this->startDate = $startDate;
-        $this->endDate = $endDate;
+        $this->type = $type;
         $this->courses = new ArrayCollection();
         $this->controls = new ArrayCollection();
+    }
+
+    public function getType(): EventType
+    {
+        return $this->type;
+    }
+
+    public function setType(EventType $type): void
+    {
+        $this->type = $type;
+    }
+
+    public function getVisibility(): Visibility
+    {
+        return $this->visibility;
+    }
+
+    public function setVisibility(Visibility $visibility): void
+    {
+        $this->visibility = $visibility;
     }
 
     public function getName(): string
@@ -102,22 +167,22 @@ class Event
         $this->description = $description;
     }
 
-    public function getStartDate(): \DateTimeImmutable
+    public function getStartDate(): ?\DateTimeImmutable
     {
         return $this->startDate;
     }
 
-    public function setStartDate(\DateTimeImmutable $startDate): void
+    public function setStartDate(?\DateTimeImmutable $startDate): void
     {
         $this->startDate = $startDate;
     }
 
-    public function getEndDate(): \DateTimeImmutable
+    public function getEndDate(): ?\DateTimeImmutable
     {
         return $this->endDate;
     }
 
-    public function setEndDate(\DateTimeImmutable $endDate): void
+    public function setEndDate(?\DateTimeImmutable $endDate): void
     {
         $this->endDate = $endDate;
     }
