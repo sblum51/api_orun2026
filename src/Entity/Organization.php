@@ -18,6 +18,7 @@ use App\State\OrganizationCreateProcessor;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
+use Gedmo\Mapping\Annotation as Gedmo;
 use Symfony\Component\Serializer\Attribute\Groups;
 use Symfony\Component\Validator\Constraints as Assert;
 
@@ -54,10 +55,9 @@ class Organization
     private string $name;
 
     #[ORM\Column(type: 'string', length: 160, unique: true)]
-    #[Assert\NotBlank]
-    #[Assert\Regex('/^[a-z0-9\-]+$/')]
-    #[Groups(['organization:read', 'organization:write'])]
-    private string $slug;
+    #[Gedmo\Slug(fields: ['name'])]
+    #[Groups(['organization:read'])]
+    private ?string $slug = null;
 
     #[ORM\Column(type: 'text', nullable: true)]
     #[Groups(['organization:read', 'organization:write'])]
@@ -69,11 +69,10 @@ class Organization
     #[ORM\OneToMany(mappedBy: 'organization', targetEntity: OrganizationMember::class, cascade: ['persist', 'remove'], orphanRemoval: true)]
     private Collection $members;
 
-    public function __construct(string $name, string $slug)
+    public function __construct(string $name)
     {
         $this->initializeUuid();
         $this->name = $name;
-        $this->slug = $slug;
         $this->members = new ArrayCollection();
     }
 
@@ -87,14 +86,9 @@ class Organization
         $this->name = $name;
     }
 
-    public function getSlug(): string
+    public function getSlug(): ?string
     {
         return $this->slug;
-    }
-
-    public function setSlug(string $slug): void
-    {
-        $this->slug = $slug;
     }
 
     public function getDescription(): ?string

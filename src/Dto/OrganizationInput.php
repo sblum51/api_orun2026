@@ -10,8 +10,9 @@ use Symfony\Component\Validator\Constraints as Assert;
 /**
  * Write model for creating an {@see \App\Entity\Organization}.
  *
- * The owner is never accepted from the client — it is derived from the
- * authenticated user in {@see \App\State\OrganizationCreateProcessor}.
+ * The slug is derived from the name server-side with collision handling
+ * (see {@see \App\State\OrganizationCreateProcessor}). The owner is never
+ * accepted from the client either — it is set from the authenticated user.
  */
 final class OrganizationInput
 {
@@ -19,12 +20,6 @@ final class OrganizationInput
     #[Assert\Length(max: 150)]
     #[Groups(['organization:write'])]
     public ?string $name = null;
-
-    #[Assert\NotBlank]
-    #[Assert\Regex('/^[a-z0-9\-]+$/')]
-    #[Assert\Length(max: 160)]
-    #[Groups(['organization:write'])]
-    public ?string $slug = null;
 
     #[Groups(['organization:write'])]
     public ?string $description = null;

@@ -13,8 +13,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class EventResourceTest extends ApiResourceTestCase
 {
-    // --- Collection: GET /api/events ----------------------------------------
-
     public function testGetCollectionRequiresAuthentication(): void
     {
         static::createClient()->request('GET', '/api/events');
@@ -34,8 +32,6 @@ final class EventResourceTest extends ApiResourceTestCase
         self::assertSame(3, $data['totalItems'] ?? $data['hydra:totalItems'] ?? null);
     }
 
-    // --- Collection: POST /api/events ---------------------------------------
-
     public function testPostCreatesEventInOwnedOrganization(): void
     {
         $owner = UserFactory::createOne();
@@ -45,7 +41,6 @@ final class EventResourceTest extends ApiResourceTestCase
         $response = $client->request('POST', '/api/events', [
             'json' => [
                 'name' => 'Orun Cup 2026',
-                'slug' => 'orun-cup-2026',
                 'organization' => $this->iriForOrganization($organization),
                 'startDate' => '2026-09-01',
                 'endDate' => '2026-09-03',
@@ -53,10 +48,7 @@ final class EventResourceTest extends ApiResourceTestCase
         ]);
 
         self::assertResponseStatusCodeSame(Response::HTTP_CREATED);
-        self::assertJsonContains([
-            'name' => 'Orun Cup 2026',
-            'slug' => 'orun-cup-2026',
-        ]);
+        self::assertJsonContains(['name' => 'Orun Cup 2026']);
 
         $data = $response->toArray();
         self::assertMatchesRegularExpression('#^/api/events/[0-9a-f-]{36}$#', $data['@id']);
@@ -70,7 +62,6 @@ final class EventResourceTest extends ApiResourceTestCase
         static::createClient()->request('POST', '/api/events', [
             'json' => [
                 'name' => 'Nope',
-                'slug' => 'nope',
                 'organization' => $this->iriForOrganization($organization),
                 'startDate' => '2026-09-01',
                 'endDate' => '2026-09-03',
@@ -91,7 +82,6 @@ final class EventResourceTest extends ApiResourceTestCase
         $client->request('POST', '/api/events', [
             'json' => [
                 'name' => 'Hijack',
-                'slug' => 'hijack',
                 'organization' => $this->iriForOrganization($organization),
                 'startDate' => '2026-09-01',
                 'endDate' => '2026-09-03',
@@ -102,17 +92,15 @@ final class EventResourceTest extends ApiResourceTestCase
         EventFactory::assert()->count(0);
     }
 
-    // --- Item: GET ----------------------------------------------------------
-
     public function testGetItem(): void
     {
-        $event = EventFactory::createOne(['name' => 'Readable', 'slug' => 'readable']);
+        $event = EventFactory::createOne(['name' => 'Readable']);
 
         $client = $this->createAuthenticatedClient();
         $client->request('GET', $this->iriFor($event));
 
         self::assertResponseIsSuccessful();
-        self::assertJsonContains(['name' => 'Readable', 'slug' => 'readable']);
+        self::assertJsonContains(['name' => 'Readable']);
     }
 
     public function testGetUnknownReturns404(): void
@@ -123,17 +111,11 @@ final class EventResourceTest extends ApiResourceTestCase
         self::assertResponseStatusCodeSame(Response::HTTP_NOT_FOUND);
     }
 
-    // --- Item: PATCH --------------------------------------------------------
-
     public function testPatchByOrgOwnerSucceeds(): void
     {
         $owner = UserFactory::createOne();
         $organization = OrganizationFactory::new()->withMember($owner)->create();
-        $event = EventFactory::createOne([
-            'name' => 'Old',
-            'slug' => 'patch-me',
-            'organization' => $organization,
-        ]);
+        $event = EventFactory::createOne(['name' => 'Old', 'organization' => $organization]);
 
         $client = $this->createAuthenticatedClient($owner);
         $client->request('PATCH', $this->iriFor($event), [
@@ -150,11 +132,7 @@ final class EventResourceTest extends ApiResourceTestCase
         $owner = UserFactory::createOne();
         $attacker = UserFactory::createOne();
         $organization = OrganizationFactory::new()->withMember($owner)->create();
-        $event = EventFactory::createOne([
-            'name' => 'Untouched',
-            'slug' => 'safe',
-            'organization' => $organization,
-        ]);
+        $event = EventFactory::createOne(['name' => 'Untouched', 'organization' => $organization]);
 
         $client = $this->createAuthenticatedClient($attacker);
         $client->request('PATCH', $this->iriFor($event), [
@@ -170,11 +148,7 @@ final class EventResourceTest extends ApiResourceTestCase
         $owner = UserFactory::createOne();
         $admin = UserFactory::createOne(['roles' => ['ROLE_ADMIN']]);
         $organization = OrganizationFactory::new()->withMember($owner)->create();
-        $event = EventFactory::createOne([
-            'name' => 'Moderated',
-            'slug' => 'mod',
-            'organization' => $organization,
-        ]);
+        $event = EventFactory::createOne(['name' => 'Moderated', 'organization' => $organization]);
 
         $client = $this->createAuthenticatedClient($admin);
         $client->request('PATCH', $this->iriFor($event), [
@@ -188,7 +162,7 @@ final class EventResourceTest extends ApiResourceTestCase
 
     public function testPatchRequiresAuthentication(): void
     {
-        $event = EventFactory::createOne(['slug' => 'guarded']);
+        $event = EventFactory::createOne();
 
         static::createClient()->request('PATCH', $this->iriFor($event), [
             'headers' => ['Content-Type' => 'application/merge-patch+json'],
@@ -197,8 +171,6 @@ final class EventResourceTest extends ApiResourceTestCase
 
         self::assertResponseStatusCodeSame(Response::HTTP_UNAUTHORIZED);
     }
-
-    // --- Item: DELETE -------------------------------------------------------
 
     public function testDeleteByOrgOwnerSucceeds(): void
     {

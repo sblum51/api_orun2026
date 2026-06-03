@@ -18,6 +18,7 @@ use App\Repository\EventRepository;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
+use Gedmo\Mapping\Annotation as Gedmo;
 use Symfony\Component\Serializer\Attribute\Groups;
 use Symfony\Component\Validator\Constraints as Assert;
 
@@ -54,10 +55,9 @@ class Event
     private string $name;
 
     #[ORM\Column(type: 'string', length: 210, unique: true)]
-    #[Assert\NotBlank]
-    #[Assert\Regex('/^[a-z0-9\-]+$/')]
-    #[Groups(['event:read', 'event:write'])]
-    private string $slug;
+    #[Gedmo\Slug(fields: ['name'])]
+    #[Groups(['event:read'])]
+    private ?string $slug = null;
 
     #[ORM\Column(type: 'text', nullable: true)]
     #[Groups(['event:read', 'event:write'])]
@@ -107,11 +107,10 @@ class Event
     #[ORM\OneToMany(mappedBy: 'event', targetEntity: Control::class, cascade: ['remove'])]
     private Collection $controls;
 
-    public function __construct(string $name, string $slug, EventType $type = EventType::Temporal)
+    public function __construct(string $name, EventType $type = EventType::Temporal)
     {
         $this->initializeUuid();
         $this->name = $name;
-        $this->slug = $slug;
         $this->type = $type;
         $this->courses = new ArrayCollection();
         $this->controls = new ArrayCollection();
@@ -147,14 +146,9 @@ class Event
         $this->name = $name;
     }
 
-    public function getSlug(): string
+    public function getSlug(): ?string
     {
         return $this->slug;
-    }
-
-    public function setSlug(string $slug): void
-    {
-        $this->slug = $slug;
     }
 
     public function getDescription(): ?string

@@ -37,13 +37,12 @@ final class OrganizationResourceTest extends ApiResourceTestCase
 
     // --- Collection: POST /api/organizations --------------------------------
 
-    public function testPostCreatesOrganization(): void
+    public function testPostCreatesOrganizationWithDerivedSlug(): void
     {
         $client = $this->createAuthenticatedClient();
         $response = $client->request('POST', '/api/organizations', [
             'json' => [
                 'name' => 'Orun Club',
-                'slug' => 'orun-club',
                 'description' => 'A test club',
             ],
         ]);
@@ -61,10 +60,27 @@ final class OrganizationResourceTest extends ApiResourceTestCase
         OrganizationFactory::assert()->count(1);
     }
 
+    public function testPostAppendsCounterWhenSlugCollides(): void
+    {
+        $client = $this->createAuthenticatedClient();
+        $client->request('POST', '/api/organizations', [
+            'json' => ['name' => 'Orun Club'],
+        ]);
+        self::assertResponseStatusCodeSame(Response::HTTP_CREATED);
+
+        $response = $client->request('POST', '/api/organizations', [
+            'json' => ['name' => 'Orun Club'],
+        ]);
+        self::assertResponseStatusCodeSame(Response::HTTP_CREATED);
+        self::assertJsonContains(['name' => 'Orun Club', 'slug' => 'orun-club-1']);
+
+        OrganizationFactory::assert()->count(2);
+    }
+
     public function testPostRequiresAuthentication(): void
     {
         static::createClient()->request('POST', '/api/organizations', [
-            'json' => ['name' => 'Nope', 'slug' => 'nope'],
+            'json' => ['name' => 'Nope'],
         ]);
 
         self::assertResponseStatusCodeSame(Response::HTTP_UNAUTHORIZED);
@@ -75,13 +91,11 @@ final class OrganizationResourceTest extends ApiResourceTestCase
     {
         $client = $this->createAuthenticatedClient();
         $response = $client->request('POST', '/api/organizations', [
-            'json' => ['name' => '', 'slug' => 'Invalid Slug!'],
+            'json' => ['name' => ''],
         ]);
 
         self::assertResponseStatusCodeSame(Response::HTTP_UNPROCESSABLE_ENTITY);
-        $content = $response->getContent(false);
-        self::assertStringContainsString('name', $content);
-        self::assertStringContainsString('slug', $content);
+        self::assertStringContainsString('name', $response->getContent(false));
         OrganizationFactory::assert()->count(0);
     }
 
@@ -89,16 +103,13 @@ final class OrganizationResourceTest extends ApiResourceTestCase
 
     public function testGetItem(): void
     {
-        $organization = OrganizationFactory::createOne(['name' => 'Read Me', 'slug' => 'read-me']);
+        $organization = OrganizationFactory::createOne(['name' => 'Read Me']);
 
         $client = $this->createAuthenticatedClient();
         $client->request('GET', $this->iriFor($organization));
 
         self::assertResponseIsSuccessful();
-        self::assertJsonContains([
-            'name' => 'Read Me',
-            'slug' => 'read-me',
-        ]);
+        self::assertJsonContains(['name' => 'Read Me']);
     }
 
     public function testGetUnknownItemReturns404(): void
@@ -116,7 +127,7 @@ final class OrganizationResourceTest extends ApiResourceTestCase
         $owner = UserFactory::createOne();
         $organization = OrganizationFactory::new()
             ->withMember($owner)
-            ->create(['name' => 'Old Name', 'slug' => 'patch-me']);
+            ->create(['name' => 'Old Name']);
 
         $client = $this->createAuthenticatedClient($owner);
         $client->request('PATCH', $this->iriFor($organization), [
@@ -125,15 +136,12 @@ final class OrganizationResourceTest extends ApiResourceTestCase
         ]);
 
         self::assertResponseIsSuccessful();
-        self::assertJsonContains([
-            'name' => 'New Name',
-            'slug' => 'patch-me',
-        ]);
+        self::assertJsonContains(['name' => 'New Name']);
     }
 
     public function testPatchRequiresAuthentication(): void
     {
-        $organization = OrganizationFactory::createOne(['slug' => 'guarded']);
+        $organization = OrganizationFactory::createOne();
 
         static::createClient()->request('PATCH', $this->iriFor($organization), [
             'headers' => ['Content-Type' => 'application/merge-patch+json'],
@@ -149,7 +157,7 @@ final class OrganizationResourceTest extends ApiResourceTestCase
         $attacker = UserFactory::createOne();
         $organization = OrganizationFactory::new()
             ->withMember($owner)
-            ->create(['name' => 'Untouched', 'slug' => 'no-touchy']);
+            ->create(['name' => 'Untouched']);
 
         $client = $this->createAuthenticatedClient($attacker);
         $client->request('PATCH', $this->iriFor($organization), [
@@ -166,7 +174,7 @@ final class OrganizationResourceTest extends ApiResourceTestCase
         $admin = UserFactory::createOne(['roles' => ['ROLE_ADMIN']]);
         $organization = OrganizationFactory::new()
             ->withMember($owner)
-            ->create(['name' => 'Moderated', 'slug' => 'mod-me']);
+            ->create(['name' => 'Moderated']);
 
         $client = $this->createAuthenticatedClient($admin);
         $client->request('PATCH', $this->iriFor($organization), [
@@ -185,7 +193,7 @@ final class OrganizationResourceTest extends ApiResourceTestCase
         $owner = UserFactory::createOne();
         $organization = OrganizationFactory::new()
             ->withMember($owner)
-            ->create(['slug' => 'delete-me']);
+            ->create();
         $iri = $this->iriFor($organization);
 
         $client = $this->createAuthenticatedClient($owner);
@@ -200,7 +208,7 @@ final class OrganizationResourceTest extends ApiResourceTestCase
 
     public function testDeleteRequiresAuthentication(): void
     {
-        $organization = OrganizationFactory::createOne(['slug' => 'safe']);
+        $organization = OrganizationFactory::createOne();
 
         static::createClient()->request('DELETE', $this->iriFor($organization));
 
@@ -214,7 +222,7 @@ final class OrganizationResourceTest extends ApiResourceTestCase
         $attacker = UserFactory::createOne();
         $organization = OrganizationFactory::new()
             ->withMember($owner)
-            ->create(['slug' => 'protected']);
+            ->create();
 
         $client = $this->createAuthenticatedClient($attacker);
         $client->request('DELETE', $this->iriFor($organization));

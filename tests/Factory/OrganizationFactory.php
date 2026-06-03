@@ -22,7 +22,6 @@ final class OrganizationFactory extends PersistentObjectFactory
     {
         return [
             'name' => self::faker()->unique()->company(),
-            'slug' => self::faker()->unique()->slug(),
             'description' => self::faker()->optional()->sentence(),
         ];
     }

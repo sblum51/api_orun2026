@@ -24,7 +24,6 @@ final class EventFactory extends PersistentObjectFactory
 
         return [
             'name' => self::faker()->unique()->sentence(3),
-            'slug' => self::faker()->unique()->slug(),
             'organization' => OrganizationFactory::new(),
             'startDate' => \DateTimeImmutable::createFromMutable($start),
             'endDate' => \DateTimeImmutable::createFromMutable($end),
