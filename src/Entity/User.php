@@ -4,17 +4,32 @@ declare(strict_types=1);
 
 namespace App\Entity;
 
+use ApiPlatform\Metadata\ApiResource;
+use ApiPlatform\Metadata\Post;
+use App\Dto\RegisterInput;
 use App\Entity\Trait\IdentifiableTrait;
 use App\Entity\Trait\TimestampableTrait;
 use App\Repository\UserRepository;
+use App\State\RegisterProcessor;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface;
 use Symfony\Component\Security\Core\User\UserInterface;
+use Symfony\Component\Serializer\Attribute\Groups;
 use Symfony\Component\Validator\Constraints as Assert;
 
 #[ORM\Entity(repositoryClass: UserRepository::class)]
 #[ORM\Table(name: 'users')]
 #[ORM\HasLifecycleCallbacks]
+#[ApiResource(
+    operations: [
+        new Post(
+            uriTemplate: '/auth/register',
+            input: RegisterInput::class,
+            processor: RegisterProcessor::class,
+            normalizationContext: ['groups' => ['user:read']],
+        ),
+    ],
+)]
 class User implements UserInterface, PasswordAuthenticatedUserInterface
 {
     use IdentifiableTrait;
@@ -23,6 +38,7 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[ORM\Column(type: 'string', length: 180, unique: true)]
     #[Assert\NotBlank]
     #[Assert\Email]
+    #[Groups(['user:read'])]
     private string $email;
 
     /**
@@ -36,10 +52,12 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     #[ORM\Column(type: 'string', length: 100)]
     #[Assert\NotBlank]
+    #[Groups(['user:read'])]
     private string $firstName;
 
     #[ORM\Column(type: 'string', length: 100)]
     #[Assert\NotBlank]
+    #[Groups(['user:read'])]
     private string $lastName;
 
     public function __construct(string $email, string $firstName, string $lastName)
