@@ -6,11 +6,16 @@ namespace App\Entity;
 
 use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\Post;
+use App\Dto\ForgotPasswordInput;
 use App\Dto\RegisterInput;
+use App\Dto\ResetPasswordInput;
 use App\Entity\Trait\IdentifiableTrait;
 use App\Entity\Trait\TimestampableTrait;
 use App\Repository\UserRepository;
+use App\State\ForgotPasswordProcessor;
 use App\State\RegisterProcessor;
+use App\State\ResetPasswordProcessor;
+use Symfony\Component\HttpFoundation\Response;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface;
 use Symfony\Component\Security\Core\User\UserInterface;
@@ -28,6 +33,24 @@ use Symfony\Component\Validator\Constraints as Assert;
             processor: RegisterProcessor::class,
             normalizationContext: ['groups' => ['user:read']],
         ),
+        new Post(
+            uriTemplate: '/auth/forgot-password',
+            status: Response::HTTP_NO_CONTENT,
+            input: ForgotPasswordInput::class,
+            output: false,
+            processor: ForgotPasswordProcessor::class,
+            read: false,
+            write: true,
+        ),
+        new Post(
+            uriTemplate: '/auth/reset-password',
+            status: Response::HTTP_NO_CONTENT,
+            input: ResetPasswordInput::class,
+            output: false,
+            processor: ResetPasswordProcessor::class,
+            read: false,
+            write: true,
+        ),
     ],
 )]
 class User implements UserInterface, PasswordAuthenticatedUserInterface
@@ -38,7 +61,7 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[ORM\Column(type: 'string', length: 180, unique: true)]
     #[Assert\NotBlank]
     #[Assert\Email]
-    #[Groups(['user:read'])]
+    #[Groups(['user:read', 'organization_member:read'])]
     private string $email;
 
     /**
@@ -52,12 +75,12 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     #[ORM\Column(type: 'string', length: 100)]
     #[Assert\NotBlank]
-    #[Groups(['user:read'])]
+    #[Groups(['user:read', 'organization_member:read'])]
     private string $firstName;
 
     #[ORM\Column(type: 'string', length: 100)]
     #[Assert\NotBlank]
-    #[Groups(['user:read'])]
+    #[Groups(['user:read', 'organization_member:read'])]
     private string $lastName;
 
     public function __construct(string $email, string $firstName, string $lastName)

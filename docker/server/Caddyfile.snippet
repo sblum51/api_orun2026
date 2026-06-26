@@ -1,0 +1,15 @@
+# Bloc à ajouter au Caddyfile partagé sur le serveur
+# (~/docker/Caddyfile, à côté du bloc caporientation).
+#
+# Le domaine est fourni par la variable d'environnement ORUN_API_DOMAIN
+# (à ajouter dans le .env de l'infra : ~/docker/.env).
+#
+# Exemples :
+#   ORUN_API_DOMAIN=preprod.api-v2.orun.app
+#   ORUN_API_DOMAIN=api-v2.orun.app
+
+{$ORUN_API_DOMAIN} {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+	reverse_proxy orun-api:80
+}

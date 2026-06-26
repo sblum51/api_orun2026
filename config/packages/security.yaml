@@ -44,6 +44,18 @@ security:
         - { path: ^/api/auth/reset-password, roles: PUBLIC_ACCESS }
         - { path: ^/docs, roles: PUBLIC_ACCESS }
         - { path: ^/api/docs, roles: PUBLIC_ACCESS }
+        # Anonymous read access for the mobile app — POST/PATCH/DELETE on
+        # the same paths fall through to the IS_AUTHENTICATED rule below.
+        # Per-resource visibility/auth is then enforced by the Visibility
+        # extension + voters: public events/courses/controls only.
+        - { path: ^/api/events, methods: [GET], roles: PUBLIC_ACCESS }
+        # Ranking endpoints stay manager-only — they aggregate per-runner
+        # timings that we don't surface publicly. Order matters: match
+        # before the generic /api/courses opener below.
+        - { path: ^/api/courses/[^/]+/ranking, roles: IS_AUTHENTICATED }
+        - { path: ^/api/courses, methods: [GET], roles: PUBLIC_ACCESS }
+        - { path: ^/api/controls, methods: [GET], roles: PUBLIC_ACCESS }
+        - { path: ^/api/course_controls, methods: [GET], roles: PUBLIC_ACCESS }
         - { path: ^/, roles: IS_AUTHENTICATED }
 
 when@test:

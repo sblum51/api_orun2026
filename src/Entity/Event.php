@@ -12,9 +12,11 @@ use ApiPlatform\Metadata\Patch;
 use ApiPlatform\Metadata\Post;
 use App\Entity\Trait\IdentifiableTrait;
 use App\Entity\Trait\TimestampableTrait;
+use App\Enum\ControlValidationMethod;
 use App\Enum\EventType;
 use App\Enum\Visibility;
 use App\Repository\EventRepository;
+use App\State\EventPersistProcessor;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
@@ -27,18 +29,23 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[ORM\HasLifecycleCallbacks]
 #[ApiResource(
     operations: [
-        new GetCollection(),
-        new Get(),
+        // Anonymous reads are allowed — the {@see \App\Doctrine\VisibilityExtension}
+        // narrows the SQL to public events, and the slim `event:public` group
+        // limits what flows out to the bare minimum the mobile app needs.
+        new GetCollection(
+            security: "is_granted('PUBLIC_ACCESS')",
+            normalizationContext: ['groups' => ['event:public']],
+        ),
+        new Get(security: "is_granted('view', object)"),
         new Post(
             security: "is_granted('ROLE_USER')",
-            securityPostDenormalize: "is_granted('manage', object.getOrganization())",
-            securityPostDenormalizeMessage: 'You can only create events in an organization you manage.',
+            processor: EventPersistProcessor::class,
         ),
         new Patch(
-            security: "is_granted('manage', object.getOrganization())",
+            security: "is_granted('manage', object)",
         ),
         new Delete(
-            security: "is_granted('manage', object.getOrganization())",
+            security: "is_granted('manage', object)",
         ),
     ],
     normalizationContext: ['groups' => ['event:read']],
@@ -51,12 +58,12 @@ class Event
 
     #[ORM\Column(type: 'string', length: 200)]
     #[Assert\NotBlank]
-    #[Groups(['event:read', 'event:write'])]
+    #[Groups(['event:read', 'event:write', 'event:public'])]
     private string $name;
 
     #[ORM\Column(type: 'string', length: 210, unique: true)]
     #[Gedmo\Slug(fields: ['name'])]
-    #[Groups(['event:read'])]
+    #[Groups(['event:read', 'event:public'])]
     private ?string $slug = null;
 
     #[ORM\Column(type: 'text', nullable: true)]
@@ -64,7 +71,7 @@ class Event
     private ?string $description = null;
 
     #[ORM\Column(type: 'string', length: 20, enumType: EventType::class)]
-    #[Groups(['event:read', 'event:write'])]
+    #[Groups(['event:read', 'event:write', 'event:public'])]
     private EventType $type = EventType::Temporal;
 
     #[ORM\Column(type: 'string', length: 20, enumType: Visibility::class)]
@@ -83,7 +90,7 @@ class Event
     private ?\DateTimeImmutable $endDate = null;
 
     #[ORM\Column(type: 'string', length: 200, nullable: true)]
-    #[Groups(['event:read', 'event:write'])]
+    #[Groups(['event:read', 'event:write', 'event:public'])]
     private ?string $location = null;
 
     #[ORM\Column(type: 'float', nullable: true)]
@@ -100,19 +107,58 @@ class Event
     #[Groups(['event:read', 'event:write'])]
     private bool $showMap = true;
 
+    /**
+     * Cover photo used to illustrate the event in lists and headers.
+     * Stored as a fully-qualified URL (the upload controller writes via
+     * {@see \App\Service\MapStorage} which returns a public URL).
+     * Null means "no upload yet"; the mobile app then falls back to a
+     * deterministic random image keyed on the slug.
+     */
+    #[ORM\Column(type: 'string', length: 500, nullable: true)]
+    #[Groups(['event:read', 'event:public'])]
+    private ?string $coverImageUrl = null;
+
+    /**
+     * Validation methods proposed by default whenever a new control is added
+     * to this event. Stored as the backing values of
+     * {@see ControlValidationMethod}. Same shape as Control.validationMethods
+     * so the front can copy it straight onto the control form.
+     *
+     * @var list<string>
+     */
+    #[ORM\Column(type: 'json', options: ['default' => '[]'])]
+    #[Groups(['event:read', 'event:write'])]
+    #[Assert\All([
+        new Assert\Choice(callback: [ControlValidationMethod::class, 'values']),
+    ])]
+    private array $defaultValidationMethods = [];
+
     #[ORM\Column(type: 'boolean')]
     #[Groups(['event:read', 'event:write'])]
     private bool $published = false;
 
     #[ORM\ManyToOne(targetEntity: Organization::class)]
-    #[ORM\JoinColumn(nullable: false, onDelete: 'RESTRICT')]
+    #[ORM\JoinColumn(nullable: true, onDelete: 'RESTRICT')]
     #[Groups(['event:read', 'event:write'])]
-    private Organization $organization;
+    private ?Organization $organization = null;
 
     /**
+     * The user who created the event. Always set server-side from the
+     * authenticated user; never accepted from the client.
+     */
+    #[ORM\ManyToOne(targetEntity: User::class)]
+    #[ORM\JoinColumn(nullable: false, onDelete: 'RESTRICT')]
+    #[Groups(['event:read'])]
+    private ?User $creator = null;
+
+    /**
+     * EXTRA_LAZY so {@see getCoursesCount()} translates to a `COUNT(*)` query
+     * instead of hydrating every course of every event in the listing —
+     * pagination would be untenable otherwise.
+     *
      * @var Collection<int, Course>
      */
-    #[ORM\OneToMany(mappedBy: 'event', targetEntity: Course::class, cascade: ['remove'])]
+    #[ORM\OneToMany(mappedBy: 'event', targetEntity: Course::class, cascade: ['remove'], fetch: 'EXTRA_LAZY')]
     private Collection $courses;
 
     /**
@@ -124,7 +170,11 @@ class Event
     public function __construct(string $name, EventType $type = EventType::Temporal)
     {
         $this->initializeUuid();
-        $this->name = $name;
+        // Funnel through the setter so the trim+capitalize normalization
+        // applies even when the entity is built via the API Platform
+        // denormalizer (which calls the constructor with the raw `name`
+        // arg and would otherwise short-circuit the setter).
+        $this->setName($name);
         $this->type = $type;
         $this->courses = new ArrayCollection();
         $this->controls = new ArrayCollection();
@@ -155,9 +205,31 @@ class Event
         return $this->name;
     }
 
+    /**
+     * Normalises the human-typed name: trims whitespace and capitalises
+     * the first letter. Done here (not in a validator) so every entry
+     * point — manager modal, mobile registration, fixtures, raw API POST —
+     * stores the same shape without having to repeat the rule.
+     */
     public function setName(string $name): void
     {
-        $this->name = $name;
+        $trimmed = trim($name);
+        if ('' === $trimmed) {
+            $this->name = $trimmed;
+
+            return;
+        }
+        $this->name = mb_strtoupper(mb_substr($trimmed, 0, 1)).mb_substr($trimmed, 1);
+    }
+
+    public function getCoverImageUrl(): ?string
+    {
+        return $this->coverImageUrl;
+    }
+
+    public function setCoverImageUrl(?string $coverImageUrl): void
+    {
+        $this->coverImageUrl = $coverImageUrl;
     }
 
     public function getSlug(): ?string
@@ -245,14 +317,47 @@ class Event
         $this->published = $published;
     }
 
-    public function getOrganization(): Organization
+    public function getOrganization(): ?Organization
     {
         return $this->organization;
     }
 
-    public function setOrganization(Organization $organization): void
+    public function setOrganization(?Organization $organization): void
     {
         $this->organization = $organization;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function getDefaultValidationMethods(): array
+    {
+        return $this->defaultValidationMethods;
+    }
+
+    /**
+     * @param list<ControlValidationMethod|string> $methods
+     */
+    public function setDefaultValidationMethods(array $methods): void
+    {
+        $normalized = [];
+        foreach ($methods as $method) {
+            $value = $method instanceof ControlValidationMethod ? $method->value : (string) $method;
+            if (!\in_array($value, $normalized, true)) {
+                $normalized[] = $value;
+            }
+        }
+        $this->defaultValidationMethods = array_values($normalized);
+    }
+
+    public function getCreator(): ?User
+    {
+        return $this->creator;
+    }
+
+    public function setCreator(User $creator): void
+    {
+        $this->creator = $creator;
     }
 
     /**
@@ -261,6 +366,17 @@ class Event
     public function getCourses(): Collection
     {
         return $this->courses;
+    }
+
+    /**
+     * Exposed in `event:public` so the mobile event list can show
+     * "X circuits" without a second request. EXTRA_LAZY on the relation
+     * means this is a single `COUNT(*)`.
+     */
+    #[Groups(['event:read', 'event:public'])]
+    public function getCoursesCount(): int
+    {
+        return $this->courses->count();
     }
 
     /**

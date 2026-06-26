@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Entity;
 
+use ApiPlatform\Doctrine\Orm\Filter\SearchFilter;
+use ApiPlatform\Metadata\ApiFilter;
 use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
 use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\Link;
 use ApiPlatform\Metadata\Patch;
 use ApiPlatform\Metadata\Post;
 use App\Entity\Trait\IdentifiableTrait;
@@ -27,22 +30,42 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[ApiResource(
     operations: [
         new GetCollection(),
-        new Get(),
+        new Get(security: "is_granted('view', object)"),
         new Post(
             security: "is_granted('ROLE_USER')",
-            securityPostDenormalize: "is_granted('manage', object.getEvent().getOrganization())",
+            securityPostDenormalize: "is_granted('manage', object.getEvent())",
             securityPostDenormalizeMessage: 'You can only create courses in an event of an organization you manage.',
         ),
         new Patch(
-            security: "is_granted('manage', object.getEvent().getOrganization())",
+            security: "is_granted('manage', object.getEvent())",
         ),
         new Delete(
-            security: "is_granted('manage', object.getEvent().getOrganization())",
+            security: "is_granted('manage', object.getEvent())",
         ),
     ],
     normalizationContext: ['groups' => ['course:read']],
     denormalizationContext: ['groups' => ['course:write']],
 )]
+/*
+ * Subresource: GET /api/events/{eventId}/courses — returns every Course of
+ * an Event, server-side filtered (no pagination surprise on the manager
+ * side). VisibilityExtension still applies so private courses stay hidden.
+ *
+ * API Platform 4 doesn't propagate the resource-level uriTemplate to
+ * operations, so we declare it on the GetCollection itself.
+ */
+#[ApiResource(
+    operations: [
+        new GetCollection(
+            uriTemplate: '/events/{eventId}/courses',
+            uriVariables: [
+                'eventId' => new Link(fromClass: Event::class, toProperty: 'event'),
+            ],
+            normalizationContext: ['groups' => ['course:read']],
+        ),
+    ],
+)]
+#[ApiFilter(SearchFilter::class, properties: ['event' => 'exact'])]
 class Course
 {
     use IdentifiableTrait;
@@ -70,6 +93,55 @@ class Course
     #[Assert\PositiveOrZero]
     #[Groups(['course:read', 'course:write'])]
     private ?string $distanceKm = null;
+
+    /**
+     * When true, controls assigned to this course are expected to carry
+     * latitude/longitude (and the manager UI shows the map for placement).
+     * When false, controls are identified by code only.
+     */
+    #[ORM\Column(type: 'boolean', options: ['default' => true])]
+    #[Groups(['course:read', 'course:write'])]
+    private bool $controlsGeolocated = true;
+
+    /**
+     * When true (default), the manager + mobile renderer draw the IOF
+     * symbols (start triangle, control circles, finish double circle) and
+     * the connecting line on top of the basemap. When false, the operator
+     * has decided the GroundOverlay image already embeds the full circuit
+     * graphics, so drawing them again would just clutter the map.
+     */
+    #[ORM\Column(type: 'boolean', options: ['default' => true])]
+    #[Groups(['course:read', 'course:write'])]
+    private bool $drawCircuitOverlay = true;
+
+    /**
+     * Start triangle position. Distinct from regular controls — the start is
+     * its own KMZ Placemark (typically id="S1") and has no orienteering code.
+     */
+    #[ORM\Column(type: 'float', nullable: true)]
+    #[Assert\Range(min: -90, max: 90)]
+    #[Groups(['course:read', 'course:write'])]
+    private ?float $startLatitude = null;
+
+    #[ORM\Column(type: 'float', nullable: true)]
+    #[Assert\Range(min: -180, max: 180)]
+    #[Groups(['course:read', 'course:write'])]
+    private ?float $startLongitude = null;
+
+    /**
+     * Finish "double circle" position. Typically a separate KMZ Placemark
+     * (e.g. id="F1"); a course can end at the same spot as its last control
+     * but conceptually it's still its own point.
+     */
+    #[ORM\Column(type: 'float', nullable: true)]
+    #[Assert\Range(min: -90, max: 90)]
+    #[Groups(['course:read', 'course:write'])]
+    private ?float $finishLatitude = null;
+
+    #[ORM\Column(type: 'float', nullable: true)]
+    #[Assert\Range(min: -180, max: 180)]
+    #[Groups(['course:read', 'course:write'])]
+    private ?float $finishLongitude = null;
 
     #[ORM\ManyToOne(targetEntity: Event::class, inversedBy: 'courses')]
     #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
@@ -140,6 +212,66 @@ class Course
     public function setDistanceKm(?string $km): void
     {
         $this->distanceKm = $km;
+    }
+
+    public function isControlsGeolocated(): bool
+    {
+        return $this->controlsGeolocated;
+    }
+
+    public function setControlsGeolocated(bool $geolocated): void
+    {
+        $this->controlsGeolocated = $geolocated;
+    }
+
+    public function isDrawCircuitOverlay(): bool
+    {
+        return $this->drawCircuitOverlay;
+    }
+
+    public function setDrawCircuitOverlay(bool $drawCircuitOverlay): void
+    {
+        $this->drawCircuitOverlay = $drawCircuitOverlay;
+    }
+
+    public function getStartLatitude(): ?float
+    {
+        return $this->startLatitude;
+    }
+
+    public function setStartLatitude(?float $startLatitude): void
+    {
+        $this->startLatitude = $startLatitude;
+    }
+
+    public function getStartLongitude(): ?float
+    {
+        return $this->startLongitude;
+    }
+
+    public function setStartLongitude(?float $startLongitude): void
+    {
+        $this->startLongitude = $startLongitude;
+    }
+
+    public function getFinishLatitude(): ?float
+    {
+        return $this->finishLatitude;
+    }
+
+    public function setFinishLatitude(?float $finishLatitude): void
+    {
+        $this->finishLatitude = $finishLatitude;
+    }
+
+    public function getFinishLongitude(): ?float
+    {
+        return $this->finishLongitude;
+    }
+
+    public function setFinishLongitude(?float $finishLongitude): void
+    {
+        $this->finishLongitude = $finishLongitude;
     }
 
     public function getEvent(): Event

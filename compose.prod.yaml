@@ -1,0 +1,49 @@
+# Docker Compose — déploiement serveur partagé
+# Usage : se copie sur le serveur en ~/orun-api/compose.yaml par `castor setup`.
+#
+# Pré-requis sur le serveur (cf. docker/server/Caddyfile.snippet) :
+#   - Networks externes "web" et "backend" déjà créés.
+#   - Stack infra (caddy + postgres) déjà UP dans ~/docker/.
+#   - Le Postgres partagé doit utiliser une image PostGIS
+#     (postgis/postgis:17-alpine en remplacement de postgres:17-alpine).
+#   - Image "orun-api:latest" buildée par `castor build` :
+#       docker build -t orun-api:latest --target prod .
+#   - .env voisin avec APP_SECRET, DATABASE_URL, JWT_PASSPHRASE…
+#   - Domaine ajouté au Caddyfile partagé (cf. docker/server/Caddyfile.snippet).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+
+  orun-api:
+    image: orun-api:latest
+    volumes:
+      # JWT keys, uploads et logs persistent côté hôte — voir le `setup` du
+      # castor pour la création initiale des dossiers.
+      - ./jwt:/app/config/jwt:ro
+      - ./uploads:/app/var/uploads
+      - ./logs:/app/var/log
+    env_file:
+      - ./.env
+    environment:
+      APP_ENV: prod
+      APP_DEBUG: "0"
+      # FrankenPHP : workers ≈ vCPU, threads ≈ 2× workers (overridables
+      # via le .env pour les serveurs plus costauds).
+      FRANKENPHP_NUM_WORKERS: "${FRANKENPHP_NUM_WORKERS:-4}"
+      FRANKENPHP_NUM_THREADS: "${FRANKENPHP_NUM_THREADS:-8}"
+    restart: always
+    logging: *default-logging
+    networks:
+      - web        # joignable par le Caddy partagé
+      - backend    # accès au Postgres partagé
+
+networks:
+  web:
+    external: true
+  backend:
+    external: true

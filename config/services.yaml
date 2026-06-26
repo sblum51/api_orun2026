@@ -19,5 +19,11 @@ services:
     App\:
         resource: '../src/'
 
-    # add more service definitions when explicit configuration is needed
-    # please note that last definitions always *replace* previous ones
+    # MapStorage delegates to a Flysystem storage. The bound service id comes from
+    # env var MAP_STORAGE_SERVICE: set it to `map.storage.s3` in production after
+    # configuring AWS_REGION / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
+    # MAP_STORAGE_BUCKET (and MAP_STORAGE_ENDPOINT for OVH). Default is local disk.
+    App\Service\MapStorage:
+        arguments:
+            $storage: '@map.storage.local'
+            $publicUrlPrefix: '%env(default::MAP_STORAGE_PUBLIC_URL)%'

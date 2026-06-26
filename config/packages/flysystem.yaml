@@ -1,0 +1,38 @@
+# Read the documentation at https://github.com/thephpleague/flysystem-bundle/blob/master/docs/1-getting-started.md
+flysystem:
+    storages:
+        # Map images (KMZ GroundOverlays, manual uploads). Defaults to local
+        # disk for dev/test; switch to map.storage.s3 in prod via the
+        # MAP_STORAGE_SERVICE env var injected into MapStorage.
+        map.storage.local:
+            adapter: 'local'
+            options:
+                directory: '%kernel.project_dir%/public/uploads/maps'
+            visibility: 'public'
+
+        # Wire this up in prod by exporting AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY,
+        # AWS_REGION, MAP_STORAGE_BUCKET (for OVH: set the OVH-compatible S3 endpoint
+        # via aws_s3_client_options.endpoint).
+        map.storage.s3:
+            adapter: 'aws'
+            options:
+                client: 'aws.s3.client'
+                bucket: '%env(MAP_STORAGE_BUCKET)%'
+                prefix: 'maps/'
+            visibility: 'public'
+
+parameters:
+    # Which Flysystem storage MapStorage delegates to. Override via
+    # MAP_STORAGE_SERVICE in production (e.g. `map.storage.s3`).
+    default_map_storage: 'map.storage.local'
+
+services:
+    # S3 client used by the map.storage.s3 adapter. Reads credentials and region
+    # from standard AWS env vars; override endpoint for OVH/MinIO via env.
+    aws.s3.client:
+        class: Aws\S3\S3Client
+        arguments:
+            - version: 'latest'
+              region: '%env(default::AWS_REGION)%'
+              endpoint: '%env(default::MAP_STORAGE_ENDPOINT)%'
+              use_path_style_endpoint: '%env(bool:default::MAP_STORAGE_PATH_STYLE)%'

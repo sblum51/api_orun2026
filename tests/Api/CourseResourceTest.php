@@ -17,11 +17,21 @@ final class CourseResourceTest extends ApiResourceTestCase
 {
     // --- Collection: GET /api/courses ---------------------------------------
 
-    public function testGetCollectionRequiresAuthentication(): void
+    /**
+     * Anonymous read access is intentional — the mobile app needs to walk
+     * an event → courses → controls without a login. The visibility
+     * extension hides Private courses (or those of Private events) so
+     * non-members never see them.
+     */
+    public function testGetCollectionAllowsAnonymous(): void
     {
-        static::createClient()->request('GET', '/api/courses');
+        CourseFactory::createMany(3);
 
-        self::assertResponseStatusCodeSame(Response::HTTP_UNAUTHORIZED);
+        $response = static::createClient()->request('GET', '/api/courses');
+
+        self::assertResponseIsSuccessful();
+        $data = $response->toArray();
+        self::assertSame(3, $data['totalItems'] ?? $data['hydra:totalItems'] ?? null);
     }
 
     public function testGetCollection(): void
