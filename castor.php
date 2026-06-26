@@ -24,7 +24,7 @@ const DOMAINS = [
     'prod'    => 'api-v2.orun.app',
 ];
 
-const REPO = 'git@github.com:sblum51/orun-api.git';
+const REPO = 'git@github.com:sblum51/api_orun2026.git';
 
 // Branche par défaut suivie sur chaque cible. Surchargeable par `--branch=`
 // sur n'importe quelle tâche (utile pour pousser une feature branch en
