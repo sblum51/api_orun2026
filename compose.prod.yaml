@@ -60,16 +60,11 @@ services:
       - backend    # accès au Postgres partagé
 
 networks:
-  # Networks créés par la stack infra ~/docker/ — elle préfixe les noms
-  # avec son nom de projet ("docker_"), d'où le `name:` explicite ici.
-  # Si ton infra utilise des noms non préfixés (ex. créés à la main via
-  # `docker network create web`), retire les `name:` et garde juste
-  # `external: true`.
+  # Networks créés à la main sur l'infra partagée
+  # (`docker network create web && docker network create backend`).
   web:
-    name: docker_web
     external: true
   backend:
-    name: docker_backend
     external: true
 
 volumes:
