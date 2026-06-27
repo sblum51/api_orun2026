@@ -38,13 +38,24 @@ COPY docker/Caddyfile /etc/caddy/Caddyfile
 FROM base AS vendor
 
 COPY composer.json composer.lock symfony.lock ./
+# `--mount=type=secret,id=composer_auth` injects ~/.composer/auth.json
+# (containing a GitHub OAuth token) at build time without persisting it
+# in the final image — required to dodge the anonymous codeload rate limit
+# that surfaces as "HTTP/2 400" errors on legacy.zip downloads.
+# Falls back to anonymous if the secret isn't provided (still works for
+# small / lucky builds), and retries twice on the transient network blips.
 RUN --mount=type=cache,target=/root/.composer/cache \
+    --mount=type=secret,id=composer_auth,target=/root/.composer/auth.json,required=false \
     composer install \
       --no-dev \
       --no-scripts \
       --no-autoloader \
       --prefer-dist \
-      --classmap-authoritative
+      --classmap-authoritative \
+    || composer install \
+      --no-dev --no-scripts --no-autoloader --prefer-dist --classmap-authoritative \
+    || composer install \
+      --no-dev --no-scripts --no-autoloader --prefer-dist --classmap-authoritative
 
 # -------- final production image --------
 FROM base AS prod

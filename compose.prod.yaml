@@ -21,17 +21,34 @@ services:
 
   orun-api:
     image: orun-api:latest
+    # Pin the container name so the shared Caddy stack can `reverse_proxy
+    # orun-api:80` without dealing with the auto-prefix Compose adds (the
+    # auto name is e.g. `orun-api-orun-api-1`). Cross-project DNS over an
+    # external network only resolves container names, not service names.
+    container_name: orun-api
     volumes:
       # JWT keys, uploads et logs persistent côté hôte — voir le `setup` du
       # castor pour la création initiale des dossiers.
       - ./jwt:/app/config/jwt:ro
       - ./uploads:/app/var/uploads
       - ./logs:/app/var/log
+      # FrankenPHP/Caddy needs writable /data and /config — the local PKI
+      # module provisions an internal CA at boot (used by the admin API
+      # even when site-level HTTPS is off). Without these, the container
+      # crashes with "mkdir /data/caddy/pki: permission denied".
+      - caddy_data:/data
+      - caddy_config:/config
     env_file:
       - ./.env
     environment:
       APP_ENV: prod
       APP_DEBUG: "0"
+      # Listen on plain HTTP/80 — the shared host Caddy terminates TLS for
+      # the public domain and reverse-proxies to us over the `web` network.
+      # If this stays empty / "localhost", FrankenPHP's embedded Caddy tries
+      # to provision its own ACME cert + write to /data/caddy/pki and the
+      # container crashes with "permission denied".
+      SERVER_NAME: ":80"
       # FrankenPHP : workers ≈ vCPU, threads ≈ 2× workers (overridables
       # via le .env pour les serveurs plus costauds).
       FRANKENPHP_NUM_WORKERS: "${FRANKENPHP_NUM_WORKERS:-4}"
@@ -43,7 +60,18 @@ services:
       - backend    # accès au Postgres partagé
 
 networks:
+  # Networks créés par la stack infra ~/docker/ — elle préfixe les noms
+  # avec son nom de projet ("docker_"), d'où le `name:` explicite ici.
+  # Si ton infra utilise des noms non préfixés (ex. créés à la main via
+  # `docker network create web`), retire les `name:` et garde juste
+  # `external: true`.
   web:
+    name: docker_web
     external: true
   backend:
+    name: docker_backend
     external: true
+
+volumes:
+  caddy_data:
+  caddy_config:

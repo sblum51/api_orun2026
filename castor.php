@@ -153,8 +153,19 @@ function pull(string $target = 'preprod', string $branch = ''): void
 function build(string $target = 'preprod'): void
 {
     io()->section('Docker build');
+    // If the deployer has a ~/.composer/auth.json on the server, pipe it
+    // through as a build secret so composer can authenticate to GitHub and
+    // avoid the unauthenticated codeload rate limit ("HTTP/2 400" errors).
+    // The Dockerfile marks the secret as optional, so a missing file just
+    // falls back to anonymous installs.
     ssh_run(
-        'cd ' . APP_DIR . '/repo && docker build -f docker/Dockerfile -t ' . IMAGE . ' --target prod .',
+        'cd ' . APP_DIR . '/repo'
+        . ' && SECRET_OPT=""'
+        . ' && if [ -f "$HOME/.composer/auth.json" ]; then'
+        . '      SECRET_OPT="--secret id=composer_auth,src=$HOME/.composer/auth.json";'
+        . '    fi'
+        . ' && DOCKER_BUILDKIT=1 docker build $SECRET_OPT'
+        . '   -f docker/Dockerfile -t ' . IMAGE . ' --target prod .',
         host($target)
     );
 }
