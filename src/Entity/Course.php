@@ -143,6 +143,37 @@ class Course
     #[Groups(['course:read', 'course:write'])]
     private ?float $finishLongitude = null;
 
+    /**
+     * @deprecated mirror of starts[0]/finishes[0] kept for back-compat;
+     * the app reads the arrays first. Will be dropped once every client
+     * is on the multi-S/F shape.
+     */
+
+    /**
+     * Ordered list of Start points. The mobile app labels them S1, S2, …
+     * by their index in this array (matches the IOF Placemark naming
+     * convention). The legacy `startLatitude`/`startLongitude` mirror
+     * `starts[0]` and stay in place for back-compat — both are written by
+     * the importer; reads should prefer this array.
+     *
+     * Shape: `[{ "latitude": 48.85, "longitude": 2.35 }, ...]`
+     *
+     * @var list<array{latitude: float, longitude: float}>
+     */
+    #[ORM\Column(type: 'json', options: ['default' => '[]'])]
+    #[Groups(['course:read', 'course:write'])]
+    private array $starts = [];
+
+    /**
+     * Ordered list of Finish points (F1, F2, …). Same shape and same
+     * mirroring rule as `$starts`.
+     *
+     * @var list<array{latitude: float, longitude: float}>
+     */
+    #[ORM\Column(type: 'json', options: ['default' => '[]'])]
+    #[Groups(['course:read', 'course:write'])]
+    private array $finishes = [];
+
     #[ORM\ManyToOne(targetEntity: Event::class, inversedBy: 'courses')]
     #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
     #[Groups(['course:read', 'course:write'])]
@@ -272,6 +303,55 @@ class Course
     public function setFinishLongitude(?float $finishLongitude): void
     {
         $this->finishLongitude = $finishLongitude;
+    }
+
+    /**
+     * @return list<array{latitude: float, longitude: float}>
+     */
+    public function getStarts(): array
+    {
+        return $this->starts;
+    }
+
+    /**
+     * @param list<array{latitude: float, longitude: float}> $starts
+     */
+    public function setStarts(array $starts): void
+    {
+        $this->starts = array_values($starts);
+        // Mirror the first point to the legacy scalar columns so older code
+        // and the manager's previous queries keep working until the full
+        // migration to arrays is complete.
+        if ([] !== $this->starts) {
+            $this->startLatitude = $this->starts[0]['latitude'] ?? null;
+            $this->startLongitude = $this->starts[0]['longitude'] ?? null;
+        } else {
+            $this->startLatitude = null;
+            $this->startLongitude = null;
+        }
+    }
+
+    /**
+     * @return list<array{latitude: float, longitude: float}>
+     */
+    public function getFinishes(): array
+    {
+        return $this->finishes;
+    }
+
+    /**
+     * @param list<array{latitude: float, longitude: float}> $finishes
+     */
+    public function setFinishes(array $finishes): void
+    {
+        $this->finishes = array_values($finishes);
+        if ([] !== $this->finishes) {
+            $this->finishLatitude = $this->finishes[0]['latitude'] ?? null;
+            $this->finishLongitude = $this->finishes[0]['longitude'] ?? null;
+        } else {
+            $this->finishLatitude = null;
+            $this->finishLongitude = null;
+        }
     }
 
     public function getEvent(): Event

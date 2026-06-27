@@ -91,6 +91,11 @@ function setup(string $target = 'preprod'): void
     io()->section('Clés JWT');
     if (is_file('config/jwt/private.pem') && is_file('config/jwt/public.pem')) {
         run(['scp', 'config/jwt/private.pem', 'config/jwt/public.pem', $h . ':' . APP_DIR . '/jwt/']);
+        // FrankenPHP ≥ 1.4 runs as the `app` user (UID 33); `generate-keypair`
+        // writes 0600 owned by the developer's UID, so the bind-mounted file
+        // is unreadable inside the container. 0644 is safe — the directory
+        // itself isn't web-exposed and the host user is the deployer.
+        ssh_run('chmod 0644 ' . APP_DIR . '/jwt/private.pem ' . APP_DIR . '/jwt/public.pem', $h);
     } else {
         io()->warning('Clés JWT absentes en local — génère-les : php bin/console lexik:jwt:generate-keypair');
     }
