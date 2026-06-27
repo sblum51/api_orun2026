@@ -34,6 +34,15 @@ ENV COMPOSER_ALLOW_SUPERUSER=1 \
 COPY docker/php.ini "$PHP_INI_DIR/conf.d/zz-orun.ini"
 COPY docker/Caddyfile /etc/caddy/Caddyfile
 
+# FrankenPHP ≥ 1.4 runs as the non-root `app` user (UID 33). Caddy still
+# needs to provision its local PKI under /data/caddy/pki at boot — even
+# when site-level HTTPS is off, the admin endpoint requires it. Pre-create
+# the dirs with loose perms so the named volumes mounted on top inherit
+# writable bits (Docker copies perms from the image's empty dir on first
+# mount). Same logic for /config.
+RUN mkdir -p /data/caddy /config/caddy \
+    && chmod -R 0777 /data /config
+
 # -------- vendor stage (cached layer) --------
 FROM base AS vendor
 
