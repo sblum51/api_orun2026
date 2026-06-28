@@ -107,9 +107,13 @@ final class ReorderCourseControlsController
             );
 
             // Pass 2: assign final positions in the requested order.
+            // DBAL 4: `Statement::executeStatement()` no longer accepts
+            // params in-call — bind explicitly before each execution.
             $stmt = $conn->prepare('UPDATE course_controls SET position = :pos WHERE id = :id');
             foreach ($orderedIds as $i => $ccId) {
-                $stmt->executeStatement(['pos' => $i + 1, 'id' => $ccId]);
+                $stmt->bindValue('pos', $i + 1);
+                $stmt->bindValue('id', $ccId);
+                $stmt->executeStatement();
             }
 
             $conn->commit();
