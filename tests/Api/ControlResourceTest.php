@@ -49,7 +49,7 @@ final class ControlResourceTest extends ApiResourceTestCase
         ]);
 
         self::assertResponseStatusCodeSame(Response::HTTP_CREATED);
-        self::assertJsonContains(['code' => 42, 'validationMethods' => ['qr_code']]);
+        self::assertJsonContains(['code' => '42', 'validationMethods' => ['qr_code']]);
         ControlFactory::assert()->count(1);
     }
 

@@ -53,33 +53,30 @@ class Control
     use TimestampableTrait;
 
     /**
-     * Role of this control inside its parent event. Default `Control` is the
-     * numbered orienteering station; `Start` / `Finish` skip the numeric
-     * code requirement and use the optional `label` for display (S1, F1…).
+     * Role of this control inside its parent event. Default `Control` is
+     * the numbered orienteering station; `Start` / `Finish` use a textual
+     * code like "S1" / "F1" — same field, different format.
      */
     #[ORM\Column(type: 'string', length: 20, enumType: ControlType::class, options: ['default' => 'control'])]
     #[Groups(['control:read', 'control:write'])]
     private ControlType $type = ControlType::Control;
 
     /**
-     * Numbered station code (31-400 per IOF). Mandatory for type=Control,
-     * left null for Start/Finish — enforced application-side in the
-     * lifecycle hook below so the type→code rule lives in one spot.
+     * Unique identifier of the control within its event. Always required.
+     * Format depends on the type:
+     *  - `Control` : numeric string "31" through "400" (IOF orienteering codes).
+     *  - `Start`   : free-form, conventionally "S1", "S2", …
+     *  - `Finish`  : free-form, conventionally "F1", "F2", …
+     *
+     * Type-specific validation runs in {@see validateTypeCodeInvariant()}
+     * so every entry point (manager, raw API, fixtures, KMZ import) shares
+     * the same rule.
      */
-    #[ORM\Column(type: 'smallint', nullable: true)]
-    #[Assert\Range(min: 31, max: 400)]
+    #[ORM\Column(type: 'string', length: 10)]
+    #[Assert\NotBlank]
+    #[Assert\Length(max: 10)]
     #[Groups(['control:read', 'control:write'])]
-    private ?int $code = null;
-
-    /**
-     * Free-form label shown in the UI when there's no numeric code —
-     * typically "S1", "F1", "Départ Vert"… Used by both the manager list
-     * and the mobile run screen for Start/Finish steps.
-     */
-    #[ORM\Column(type: 'string', length: 50, nullable: true)]
-    #[Assert\Length(max: 50)]
-    #[Groups(['control:read', 'control:write'])]
-    private ?string $label = null;
+    private string $code = '';
 
     /**
      * Validation methods enabled on this control. A runner only needs to
@@ -148,9 +145,13 @@ class Control
     private Collection $tags;
 
     /**
+     * @param int|string|null              $code Numeric (31-400) for type=Control,
+     *                                           or any short string ("S1", "F1")
+     *                                           for Start/Finish. Coerced to string
+     *                                           via {@see setCode()}.
      * @param list<ControlValidationMethod> $validationMethods
      */
-    public function __construct(?Event $event = null, ?int $code = null, array $validationMethods = [])
+    public function __construct(?Event $event = null, int|string|null $code = null, array $validationMethods = [])
     {
         $this->initializeUuid();
         $this->tags = new ArrayCollection();
@@ -158,7 +159,7 @@ class Control
             $this->event = $event;
         }
         if (null !== $code) {
-            $this->code = $code;
+            $this->setCode((string) $code);
         }
         if ([] !== $validationMethods) {
             $this->setValidationMethods($validationMethods);
@@ -175,45 +176,40 @@ class Control
         $this->type = $type;
     }
 
-    public function getLabel(): ?string
-    {
-        return $this->label;
-    }
-
-    public function setLabel(?string $label): void
-    {
-        $this->label = $label;
-    }
-
-    public function getCode(): ?int
+    public function getCode(): string
     {
         return $this->code;
     }
 
-    public function setCode(?int $code): void
+    public function setCode(string $code): void
     {
-        $this->code = $code;
+        $this->code = trim($code);
     }
 
     /**
-     * Cross-field invariant : the numeric code is mandatory for `Control`
-     * type and must be absent for Start/Finish. Enforced on persist + update
-     * so the same rule applies to API Platform POSTs, manager edits, fixture
-     * builders and bulk imports without each path having to remember.
+     * Cross-field invariant : `Control` codes must parse as 31-400, while
+     * `Start` / `Finish` accept any non-blank short string (typically
+     * S1/F1). Enforced on persist + update so every entry point shares
+     * the rule.
      */
     #[ORM\PrePersist]
     #[ORM\PreUpdate]
     public function validateTypeCodeInvariant(): void
     {
-        if (ControlType::Control === $this->type) {
-            if (null === $this->code) {
-                throw new \DomainException('A "control" requires a numeric code (31-400).');
-            }
-        } else {
-            // Start / Finish never carry a code — quietly drop one if the
-            // caller passed something.
-            $this->code = null;
+        if ('' === $this->code) {
+            throw new \DomainException('A control code is required.');
         }
+        if (ControlType::Control === $this->type) {
+            if (!ctype_digit($this->code)) {
+                throw new \DomainException('A "control" code must be numeric (31-400). Got "'.$this->code.'".');
+            }
+            $n = (int) $this->code;
+            if ($n < 31 || $n > 400) {
+                throw new \DomainException('A "control" code must be 31-400. Got "'.$this->code.'".');
+            }
+        }
+        // Start / Finish accept any non-blank short string — already
+        // covered by the `'' === $this->code` check above, no extra work.
     }
 
     /**
