@@ -95,6 +95,15 @@ class Course
     private ?string $distanceKm = null;
 
     /**
+     * Total positive elevation gain (D+) in meters. Sourced from the IOF
+     * XML `<Climb>` field at import time, editable manually after.
+     */
+    #[ORM\Column(type: 'integer', nullable: true)]
+    #[Assert\PositiveOrZero]
+    #[Groups(['course:read', 'course:write'])]
+    private ?int $climbM = null;
+
+    /**
      * When true, controls assigned to this course are expected to carry
      * latitude/longitude (and the manager UI shows the map for placement).
      * When false, controls are identified by code only.
@@ -233,6 +242,16 @@ class Course
     public function setDurationLimitMin(?int $minutes): void
     {
         $this->durationLimitMin = $minutes;
+    }
+
+    public function getClimbM(): ?int
+    {
+        return $this->climbM;
+    }
+
+    public function setClimbM(?int $climbM): void
+    {
+        $this->climbM = $climbM;
     }
 
     public function getDistanceKm(): ?string
