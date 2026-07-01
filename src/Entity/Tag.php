@@ -93,7 +93,11 @@ class Tag
      * Type-specific payload:
      *  - QrCode : { "code": "ABC123" } or { "url": "https://o-club.net/..." }
      *  - Nfc    : { "uid": "04:AA:BB:CC:DD:EE:FF" }
-     *  - IBeacon: { "uuid": "f7826da6-4fa2-4e98-8024-bc5b71e0893e", "major": 1, "minor": 2 }
+     *  - IBeacon: { "uuid": "f7826da6-4fa2-4e98-8024-bc5b71e0893e", "major": 1, "minor": 2,
+     *              // Optional — populated by the mobile app when it observes
+     *              // the beacon's vendor-specific info frame. Refreshed
+     *              // throttled (1×/5 min per beacon).
+     *              "battery": 87, "batteryAt": "2026-07-01T15:32:00Z" }
      *
      * @var array<string, mixed>
      */
