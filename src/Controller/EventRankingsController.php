@@ -92,9 +92,17 @@ final class EventRankingsController
                 a.total_duration_sec AS total_duration_sec,
                 TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) AS user_name,
                 (
-                    SELECT COUNT(*)
+                    -- Count DISTINCT controls actually part of this
+                    -- activity's course, so we ignore:
+                    --   * re-punches on the same control
+                    --   * mispunches on controls not in this course
+                    --   * start/finish rows (excluded via ct2.type check)
+                    SELECT COUNT(DISTINCT p.control_id)
                     FROM punches p
                     INNER JOIN controls ct2 ON ct2.id = p.control_id
+                    INNER JOIN course_controls cc2
+                        ON cc2.control_id = p.control_id
+                        AND cc2.course_id = a.course_id
                     WHERE p.activity_id = a.id
                       AND (ct2.type IS NULL OR ct2.type = 'control')
                 ) AS punch_count
