@@ -23,6 +23,25 @@ class Activity
     #[ORM\Column(type: 'string', length: 20, enumType: ActivityStatus::class)]
     private ActivityStatus $status = ActivityStatus::Running;
 
+    /**
+     * Display name for live-ranking scoreboards. The mobile app prompts
+     * for it at the pre-start screen so runners can appear under a
+     * chosen alias rather than their account name. Null = anonymous
+     * (manager falls back to `user.name` or "Anonyme").
+     */
+    #[ORM\Column(type: 'string', length: 100, nullable: true)]
+    private ?string $pseudo = null;
+
+    /**
+     * Client-generated UUID that lets the mobile app keep pushing the
+     * same activity across many sync calls without ending up with
+     * duplicates on network flakiness. The server upserts on
+     * (user, localRunId) — one row per local run, regardless of how
+     * many times the client re-tries.
+     */
+    #[ORM\Column(type: 'string', length: 36, nullable: true)]
+    private ?string $localRunId = null;
+
     #[ORM\Column(type: 'datetime_immutable')]
     private \DateTimeImmutable $startedAt;
 
@@ -122,6 +141,26 @@ class Activity
     public function getCourse(): Course
     {
         return $this->course;
+    }
+
+    public function getPseudo(): ?string
+    {
+        return $this->pseudo;
+    }
+
+    public function setPseudo(?string $pseudo): void
+    {
+        $this->pseudo = $pseudo;
+    }
+
+    public function getLocalRunId(): ?string
+    {
+        return $this->localRunId;
+    }
+
+    public function setLocalRunId(?string $localRunId): void
+    {
+        $this->localRunId = $localRunId;
     }
 
     public function getTeam(): ?Team
