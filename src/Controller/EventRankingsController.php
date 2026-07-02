@@ -90,7 +90,7 @@ final class EventRankingsController
                 a.started_at AS started_at,
                 a.finished_at AS finished_at,
                 a.total_duration_sec AS total_duration_sec,
-                u.name AS user_name,
+                TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) AS user_name,
                 (
                     SELECT COUNT(*)
                     FROM punches p
@@ -140,7 +140,7 @@ final class EventRankingsController
                 'activityId' => $r['activity_id'],
                 'pseudo' => $r['pseudo'] !== null && trim((string) $r['pseudo']) !== ''
                     ? $r['pseudo']
-                    : ($r['user_name'] ?? 'Anonyme'),
+                    : (!empty($r['user_name']) ? $r['user_name'] : 'Anonyme'),
                 'punchCount' => (int) $r['punch_count'],
                 'elapsedSec' => $elapsed,
                 'status' => $status?->value ?? 'running',
