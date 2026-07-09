@@ -7,6 +7,7 @@
 # Put parameters here that don't need to change on each machine where the app is deployed
 # https://symfony.com/doc/current/best_practices.html#use-parameters-for-application-configuration
 parameters:
+    default_apns_env: 'production'
 
 services:
     # default configuration for services in *this* file
@@ -27,3 +28,22 @@ services:
         arguments:
             $storage: '@map.storage.local'
             $publicUrlPrefix: '%env(default::MAP_STORAGE_PUBLIC_URL)%'
+
+    # Push notifiers — FCM (Android) + APNs (iOS). Credentials come from
+    # env vars, see .env for defaults / expected shape. Missing creds
+    # cause the client to throw at send() time; upstream endpoints catch
+    # and continue so a misconfigured push server doesn't 500 the API.
+    App\Service\FcmPushClient:
+        arguments:
+            $serviceAccountJsonPath: '%env(FCM_SERVICE_ACCOUNT_JSON)%'
+            $overrideProjectId: '%env(default::FCM_PROJECT_ID)%'
+
+    App\Service\ApnsPushClient:
+        arguments:
+            $authKeyPath: '%env(APNS_AUTH_KEY_PATH)%'
+            $keyId: '%env(APNS_KEY_ID)%'
+            $teamId: '%env(APNS_TEAM_ID)%'
+            $bundleId: '%env(APNS_BUNDLE_ID)%'
+            # Unset env => production. Set to `sandbox` while testing
+            # with a debug build installed via Xcode.
+            $environment: '%env(default:default_apns_env:APNS_ENVIRONMENT)%'

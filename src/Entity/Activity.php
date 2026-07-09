@@ -42,6 +42,18 @@ class Activity
     #[ORM\Column(type: 'string', length: 36, nullable: true)]
     private ?string $localRunId = null;
 
+    /** Last known GPS position — updated every 30 s by the mobile
+     *  during an active run (nominal live tracking), or on-demand when
+     *  an organiser fires the emergency-locate flow. */
+    #[ORM\Column(type: 'float', nullable: true)]
+    private ?float $lastLat = null;
+
+    #[ORM\Column(type: 'float', nullable: true)]
+    private ?float $lastLng = null;
+
+    #[ORM\Column(type: 'datetime_immutable', nullable: true)]
+    private ?\DateTimeImmutable $lastLocatedAt = null;
+
     #[ORM\Column(type: 'datetime_immutable')]
     private \DateTimeImmutable $startedAt;
 
@@ -161,6 +173,28 @@ class Activity
     public function setLocalRunId(?string $localRunId): void
     {
         $this->localRunId = $localRunId;
+    }
+
+    public function getLastLat(): ?float
+    {
+        return $this->lastLat;
+    }
+
+    public function getLastLng(): ?float
+    {
+        return $this->lastLng;
+    }
+
+    public function getLastLocatedAt(): ?\DateTimeImmutable
+    {
+        return $this->lastLocatedAt;
+    }
+
+    public function setLastLocation(float $lat, float $lng, \DateTimeImmutable $at): void
+    {
+        $this->lastLat = $lat;
+        $this->lastLng = $lng;
+        $this->lastLocatedAt = $at;
     }
 
     public function getTeam(): ?Team
