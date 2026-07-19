@@ -66,6 +66,15 @@ class Event
     #[Groups(['event:read', 'event:public'])]
     private ?string $slug = null;
 
+    /**
+     * Slug on the historical `api.orun.app` API — populated when the
+     * event was imported from there. Null for events created directly
+     * in the new backend. Unique partial index at DB level.
+     */
+    #[ORM\Column(type: 'string', length: 210, nullable: true)]
+    #[Groups(['event:read'])]
+    private ?string $legacySlug = null;
+
     #[ORM\Column(type: 'text', nullable: true)]
     #[Groups(['event:read', 'event:write'])]
     private ?string $description = null;
@@ -106,6 +115,37 @@ class Event
     #[ORM\Column(type: 'boolean', options: ['default' => true])]
     #[Groups(['event:read', 'event:write'])]
     private bool $showMap = true;
+
+    /**
+     * When false, the mobile hides the post-run rating dialog AND the
+     * manager's feedback list stays empty (no new rows can be
+     * created via the POST endpoint). Existing feedbacks aren't
+     * deleted — turning the module back on brings them back into view.
+     * Also serialised in `event:public` so the mobile knows whether
+     * to render the rating dialog after a finish without a second
+     * roundtrip.
+     */
+    #[ORM\Column(type: 'boolean', options: ['default' => true])]
+    #[Groups(['event:read', 'event:write', 'event:public'])]
+    private bool $feedbackEnabled = true;
+
+    /**
+     * When false, the "Partager" section on the event detail page (both
+     * manager AND mobile) is hidden. Useful for private events an
+     * organiser doesn't want to see publicised.
+     */
+    #[ORM\Column(type: 'boolean', options: ['default' => true])]
+    #[Groups(['event:read', 'event:write', 'event:public'])]
+    private bool $shareEnabled = true;
+
+    /**
+     * When false, the mobile hides the "Signaler ce poste" button on
+     * the run screen AND the API refuses new control reports for this
+     * event. Existing reports stay visible in the manager queue.
+     */
+    #[ORM\Column(type: 'boolean', options: ['default' => true])]
+    #[Groups(['event:read', 'event:write', 'event:public'])]
+    private bool $controlReportsEnabled = true;
 
     /**
      * Cover photo used to illustrate the event in lists and headers.
@@ -232,6 +272,16 @@ class Event
         $this->coverImageUrl = $coverImageUrl;
     }
 
+    public function getLegacySlug(): ?string
+    {
+        return $this->legacySlug;
+    }
+
+    public function setLegacySlug(?string $slug): void
+    {
+        $this->legacySlug = $slug;
+    }
+
     public function getSlug(): ?string
     {
         return $this->slug;
@@ -305,6 +355,36 @@ class Event
     public function setShowMap(bool $showMap): void
     {
         $this->showMap = $showMap;
+    }
+
+    public function isFeedbackEnabled(): bool
+    {
+        return $this->feedbackEnabled;
+    }
+
+    public function setFeedbackEnabled(bool $enabled): void
+    {
+        $this->feedbackEnabled = $enabled;
+    }
+
+    public function isShareEnabled(): bool
+    {
+        return $this->shareEnabled;
+    }
+
+    public function setShareEnabled(bool $enabled): void
+    {
+        $this->shareEnabled = $enabled;
+    }
+
+    public function isControlReportsEnabled(): bool
+    {
+        return $this->controlReportsEnabled;
+    }
+
+    public function setControlReportsEnabled(bool $enabled): void
+    {
+        $this->controlReportsEnabled = $enabled;
     }
 
     public function isPublished(): bool

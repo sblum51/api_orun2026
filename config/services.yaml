@@ -8,6 +8,7 @@
 # https://symfony.com/doc/current/best_practices.html#use-parameters-for-application-configuration
 parameters:
     default_apns_env: 'production'
+    default_legacy_orun_url: 'https://api.orun.app'
 
 services:
     # default configuration for services in *this* file
@@ -37,6 +38,13 @@ services:
         arguments:
             $serviceAccountJsonPath: '%env(FCM_SERVICE_ACCOUNT_JSON)%'
             $overrideProjectId: '%env(default::FCM_PROJECT_ID)%'
+
+    # Legacy Orun API — historical https://api.orun.app, used by the
+    # import feature to seed the new backend with existing events.
+    # Override the base URL when pointing at a staging replica.
+    App\Service\LegacyOrunClient:
+        arguments:
+            $baseUrl: '%env(default:default_legacy_orun_url:LEGACY_ORUN_API_URL)%'
 
     App\Service\ApnsPushClient:
         arguments:
