@@ -21,14 +21,22 @@ services:
     App\:
         resource: '../src/'
 
-    # MapStorage delegates to a Flysystem storage. The bound service id comes from
-    # env var MAP_STORAGE_SERVICE: set it to `map.storage.s3` in production after
-    # configuring AWS_REGION / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
-    # MAP_STORAGE_BUCKET (and MAP_STORAGE_ENDPOINT for OVH). Default is local disk.
+    # MapStorage — bound to local disk by default (dev/test). The prod
+    # override below swaps it to S3 so the FrankenPHP container doesn't
+    # need /app/public/uploads to be writable (it isn't; the process runs
+    # non-root). See flysystem.yaml for the underlying storage definitions
+    # and .env* for the S3 credentials.
     App\Service\MapStorage:
         arguments:
             $storage: '@map.storage.local'
             $publicUrlPrefix: '%env(default::MAP_STORAGE_PUBLIC_URL)%'
+
+when@prod:
+    services:
+        App\Service\MapStorage:
+            arguments:
+                $storage: '@map.storage.s3'
+                $publicUrlPrefix: '%env(default::MAP_STORAGE_PUBLIC_URL)%'
 
     # Push notifiers — FCM (Android) + APNs (iOS). Credentials come from
     # env vars, see .env for defaults / expected shape. Missing creds
