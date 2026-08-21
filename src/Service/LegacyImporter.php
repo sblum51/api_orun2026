@@ -328,6 +328,21 @@ final class LegacyImporter
                     sprintf('%s%s', $name, $i > 0 ? sprintf(' — carte %d', $i + 1) : ''),
                     $stored,
                 );
+                // Géoref legacy : `coordinates.LatLonBox` — sans les
+                // bounds, le composant ControlsMap ignore silencieusement
+                // la carte (uniqueOverlays skip if !m.bounds).
+                $coords = \is_array($legacyMap['coordinates'] ?? null) ? $legacyMap['coordinates'] : null;
+                if ($coords !== null) {
+                    $bounds = [];
+                    foreach (['north', 'south', 'east', 'west', 'rotation'] as $k) {
+                        if (isset($coords[$k]) && \is_numeric($coords[$k])) {
+                            $bounds[$k] = (float) $coords[$k];
+                        }
+                    }
+                    if (isset($bounds['north'], $bounds['south'], $bounds['east'], $bounds['west'])) {
+                        $map->setBounds($bounds);
+                    }
+                }
                 $this->em->persist($map);
                 ++$result['mapsImported'];
                 ++$i;
