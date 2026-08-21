@@ -10,6 +10,7 @@ use App\Entity\CourseControl;
 use App\Entity\Event;
 use App\Entity\Map;
 use App\Entity\User;
+use App\Enum\ControlType;
 use App\Enum\ControlValidationMethod;
 use App\Enum\CourseType;
 use App\Enum\EventType;
@@ -19,21 +20,42 @@ use Psr\Log\LoggerInterface;
 
 /**
  * Materialises a legacy event (fetched from api.orun.app) into the
- * new backend's schema.
+ * new backend's schema. Idempotency is keyed on `Event.legacy_slug`:
+ * a second call with the same slug rebuilds children (controls,
+ * course_controls, maps) from the legacy payload — legacy-imported
+ * events aren't meant to be hand-edited between imports.
  *
- * Idempotency: keyed on `Event.legacy_slug`. A second call with the
- * same slug UPDATES the existing rows instead of creating duplicates.
- * Course upsert is keyed by name-within-event (the legacy API doesn't
- * expose stable UUIDs for course rows).
+ * Legacy JSON shape (probed on
+ * https://api.orun.app/events/event-france-oise-mogneville-60140):
  *
- * The mapping is best-effort: the legacy shape has evolved over years
- * and some fields don't have exact counterparts. Missing pieces
- * default to sensible values (Classic course, GPS validation method).
- * Fields we can't confidently guess are left blank so the operator
- * can polish them post-import.
+ *   {
+ *     name, slug, description, city, zipcode, country, type,
+ *     location: { geo: { lat, lng } },
+ *     controls: [                        // event-level, canonical
+ *       { id: "45" | "S1" | "F1",
+ *         position: { lat, lng },
+ *         mapPosition: { x, y },
+ *         methods: [{ type: "gps", range: 10 },
+ *                   { type: "qrcode", value: "TOKEN" },
+ *                   { type: "nfc" | "beacon", ... }] }
+ *     ],
+ *     courses: [
+ *       { name, type: "classic"|"score"|..., length, climb,
+ *         start:  { id: "S1", legLength? },
+ *         finish: { id: "F1", legLength? },
+ *         controls: [ { id: "45", order: 1, legLength: "20" }, … ],
+ *         maps: [ { filePath, mimeType, coordinates: LatLonBox } ] }
+ *     ]
+ *   }
+ *
+ * Course controls reference event.controls by id only — sequence is
+ * [start.id, ...controls sorted by order, finish.id]. Maps hosted at
+ * https://cdn.orun.app/maps/{filePath}.
  */
 final class LegacyImporter
 {
+    private const MAP_CDN_BASE = 'https://cdn.orun.app/maps/';
+
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly EventRepository $events,
@@ -62,49 +84,43 @@ final class LegacyImporter
                 EventType::Temporal,
             );
         $event->setLegacySlug($legacySlug);
-        // We call the setter without a null check so both create AND
-        // update paths converge — every field is refreshed from the
-        // legacy payload on every re-import.
-        $event->setName($this->str($payload, 'name', $event->getName()));
+        $event->setName($this->str($payload, 'name', $event->getName()) ?? $event->getName());
         if (($description = $this->str($payload, 'description', null)) !== null) {
             $event->setDescription($description);
         }
-        if (($location = $this->str($payload, 'location', null)) !== null) {
-            $event->setLocation($location);
+        // Legacy composes location as separate fields; the new backend
+        // has a single string. Join what's there.
+        $city = $this->str($payload, 'city', null);
+        $zip = $this->str($payload, 'zipcode', null);
+        $country = $this->str($payload, 'country', null);
+        $locationBits = array_filter([
+            trim(($zip ?? '') . ' ' . ($city ?? '')) ?: null,
+            $country,
+        ]);
+        if ($locationBits !== []) {
+            $event->setLocation(implode(', ', $locationBits));
         }
-        if (($startDate = $this->date($payload, 'startDate')) !== null) {
-            $event->setStartDate($startDate);
+        // Event GPS lives under location.geo.{lat,lng}
+        $geo = \is_array($payload['location'] ?? null) ? ($payload['location']['geo'] ?? null) : null;
+        if (\is_array($geo)) {
+            if (($lat = $this->numeric($geo, 'lat')) !== null) {
+                $event->setLatitude($lat);
+            }
+            if (($lng = $this->numeric($geo, 'lng')) !== null) {
+                $event->setLongitude($lng);
+            }
         }
-        if (($endDate = $this->date($payload, 'endDate')) !== null) {
-            $event->setEndDate($endDate);
-        }
-        if (($lat = $this->numeric($payload, 'latitude')) !== null) {
-            $event->setLatitude($lat);
-        }
-        if (($lng = $this->numeric($payload, 'longitude')) !== null) {
-            $event->setLongitude($lng);
-        }
-        // Ownership: creator is the caller if the row is new; existing
-        // events keep their previous creator to avoid stealing ownership
-        // on re-import.
         if ($event->getCreator() === null) {
             $event->setCreator($actor);
         }
-        // Cover image, best-effort.
-        $coverUrl = $this->str($payload, 'coverImageUrl', null)
-            ?? $this->str($payload, 'illustrationUrl', null);
-        if ($coverUrl !== null && $event->getCoverImageUrl() === null) {
-            $stored = $this->rehostAsset($coverUrl, sprintf(
-                'events/%s/legacy-cover',
-                $legacySlug,
-            ));
-            if ($stored !== null) {
-                $event->setCoverImageUrl($stored);
-            }
-        }
         $this->em->persist($event);
-        // Flush now so the Event has an id for FKs on Course/Control.
         $this->em->flush();
+
+        // Idempotency: wipe legacy-derived children so re-import is a
+        // clean rebuild. Doctrine cascades course_controls via the FK's
+        // ON DELETE CASCADE; we still remove them explicitly so the
+        // in-session UnitOfWork stays consistent.
+        $this->wipeChildren($event);
 
         $result = [
             'event' => $event,
@@ -114,26 +130,115 @@ final class LegacyImporter
             'mapsImported' => 0,
         ];
 
+        // Materialise event-level controls first, indexed by legacy id
+        // so course.controls[*].id / course.start.id / course.finish.id
+        // can point at them.
+        /** @var array<string, Control> $controlsByLegacyId */
+        $controlsByLegacyId = [];
+        $eventControls = $payload['controls'] ?? [];
+        if (\is_array($eventControls)) {
+            foreach ($eventControls as $legacyCtrl) {
+                if (!\is_array($legacyCtrl)) {
+                    continue;
+                }
+                $legacyId = (string) ($legacyCtrl['id'] ?? '');
+                if ($legacyId === '') {
+                    continue;
+                }
+                $ctrl = $this->buildControl($event, $legacyCtrl);
+                $controlsByLegacyId[$legacyId] = $ctrl;
+                $this->em->persist($ctrl);
+                ++$result['controlsCreated'];
+            }
+        }
+
         $courses = $payload['courses'] ?? [];
         if (\is_array($courses)) {
             foreach ($courses as $legacyCourse) {
                 if (!\is_array($legacyCourse)) {
                     continue;
                 }
-                $this->importCourse($event, $legacyCourse, $result);
+                $this->importCourse($event, $legacyCourse, $controlsByLegacyId, $result);
             }
         }
         $this->em->flush();
         return $result;
     }
 
-    /**
-     * @param array<string, mixed> $legacyCourse
-     * @param array<string, mixed> $result
-     */
-    private function importCourse(Event $event, array $legacyCourse, array &$result): void
+    private function wipeChildren(Event $event): void
     {
-        $name = $this->str($legacyCourse, 'name', 'Circuit sans nom');
+        $conn = $this->em->getConnection();
+        // course_controls first (FK to courses AND controls),
+        // then maps (FK to courses), then controls.
+        $conn->executeStatement(
+            'DELETE FROM course_controls WHERE course_id IN (SELECT id FROM courses WHERE event_id = :eid)',
+            ['eid' => $event->getId()->toRfc4122()],
+            ['eid' => \PDO::PARAM_STR],
+        );
+        $conn->executeStatement(
+            'DELETE FROM maps WHERE course_id IN (SELECT id FROM courses WHERE event_id = :eid)',
+            ['eid' => $event->getId()->toRfc4122()],
+            ['eid' => \PDO::PARAM_STR],
+        );
+        $conn->executeStatement(
+            'DELETE FROM controls WHERE event_id = :eid',
+            ['eid' => $event->getId()->toRfc4122()],
+            ['eid' => \PDO::PARAM_STR],
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $legacyCtrl
+     */
+    private function buildControl(Event $event, array $legacyCtrl): Control
+    {
+        $legacyId = (string) ($legacyCtrl['id'] ?? '');
+        $type = $this->controlTypeFromId($legacyId);
+
+        $methodsRaw = \is_array($legacyCtrl['methods'] ?? null) ? $legacyCtrl['methods'] : [];
+        [$methods, $payload] = $this->mapMethods($methodsRaw);
+        // A control MUST have at least one validation method — legacy
+        // occasionally omits them for start/finish; default to GPS then.
+        if ($methods === []) {
+            $methods = [ControlValidationMethod::Gps];
+        }
+
+        // Regular postes use a numeric code; start/finish use the raw
+        // id (S1, F1). Constructor validates numeric range only for
+        // type=Control, so we set type post-construction to bypass it.
+        $ctrl = new Control($event, $legacyId, $methods);
+        if ($type !== ControlType::Control) {
+            $ctrl->setType($type);
+            $ctrl->setCode($legacyId);
+        }
+
+        $pos = \is_array($legacyCtrl['position'] ?? null) ? $legacyCtrl['position'] : null;
+        if ($pos !== null) {
+            if (($lat = $this->numeric($pos, 'lat')) !== null) {
+                $ctrl->setLatitude($lat);
+            }
+            if (($lng = $this->numeric($pos, 'lng')) !== null) {
+                $ctrl->setLongitude($lng);
+            }
+        }
+        if ($payload !== []) {
+            $ctrl->setPayload($payload);
+        }
+        return $ctrl;
+    }
+
+    /**
+     * @param array<string, mixed>               $legacyCourse
+     * @param array<string, Control>             $controlsByLegacyId
+     * @param array{event: Event, coursesCreated: int, coursesUpdated: int, controlsCreated: int, mapsImported: int} $result
+     */
+    private function importCourse(
+        Event $event,
+        array $legacyCourse,
+        array $controlsByLegacyId,
+        array &$result,
+    ): void {
+        $name = $this->str($legacyCourse, 'name', 'Circuit sans nom') ?? 'Circuit sans nom';
         $type = $this->mapCourseType($this->str($legacyCourse, 'type', null));
 
         $existing = null;
@@ -151,88 +256,96 @@ final class LegacyImporter
             ++$result['coursesUpdated'];
         }
 
-        if (($climb = $this->intOrNull($legacyCourse, 'climbM') ?? $this->intOrNull($legacyCourse, 'climb')) !== null) {
+        if (($climb = $this->intOrNull($legacyCourse, 'climb')) !== null) {
             $existing->setClimbM($climb);
         }
-        if (($dist = $this->str($legacyCourse, 'distanceKm', null)) !== null) {
-            $existing->setDistanceKm($dist);
+        // Legacy `length` is in metres, our field is decimal km.
+        if (($lengthM = $this->numeric($legacyCourse, 'length')) !== null) {
+            $existing->setDistanceKm(number_format($lengthM / 1000, 3, '.', ''));
         }
 
-        // Controls — the legacy shape either embeds them or serialises
-        // as a nested `courseControls` (with position + control body).
-        $controlsSource = $legacyCourse['controls']
-            ?? $legacyCourse['courseControls']
-            ?? [];
-        if (\is_array($controlsSource)) {
-            $position = 0;
-            foreach ($controlsSource as $legacyCtrl) {
-                if (!\is_array($legacyCtrl)) {
+        // Build the ordered sequence: [start, ...controls-by-order, finish]
+        $sequence = [];
+        $startId = \is_array($legacyCourse['start'] ?? null)
+            ? (string) ($legacyCourse['start']['id'] ?? '')
+            : '';
+        if ($startId !== '' && isset($controlsByLegacyId[$startId])) {
+            $sequence[] = $controlsByLegacyId[$startId];
+        }
+
+        $ordered = [];
+        if (\is_array($legacyCourse['controls'] ?? null)) {
+            foreach ($legacyCourse['controls'] as $ref) {
+                if (!\is_array($ref)) {
                     continue;
                 }
-                // If the legacy row is a wrapper `{position, control:
-                // {…}}`, unwrap.
-                $control = \is_array($legacyCtrl['control'] ?? null)
-                    ? $legacyCtrl['control']
-                    : $legacyCtrl;
-
-                $code = (string) ($control['code'] ?? $control['number'] ?? '');
-                if ($code === '') {
+                $order = $this->intOrNull($ref, 'order') ?? \PHP_INT_MAX;
+                $refId = (string) ($ref['id'] ?? '');
+                if ($refId === '' || !isset($controlsByLegacyId[$refId])) {
                     continue;
                 }
-                $lat = $this->numeric($control, 'latitude');
-                $lng = $this->numeric($control, 'longitude');
-                $methods = $this->mapMethods($control['validationMethods'] ?? null);
-
-                $ctrl = new Control($event, $code, $methods);
-                if ($lat !== null) {
-                    $ctrl->setLatitude($lat);
-                }
-                if ($lng !== null) {
-                    $ctrl->setLongitude($lng);
-                }
-                $this->em->persist($ctrl);
-                ++$result['controlsCreated'];
-
-                $cc = new CourseControl($existing, $ctrl, ++$position);
-                $this->em->persist($cc);
+                $ordered[] = [$order, $controlsByLegacyId[$refId]];
+            }
+            usort($ordered, static fn ($a, $b) => $a[0] <=> $b[0]);
+            foreach ($ordered as [, $ctrl]) {
+                $sequence[] = $ctrl;
             }
         }
 
-        // Map image, if any — legacy exposes it under either
-        // `mapImageUrl`, `mapUrl`, or nested `maps[0].imageUrl`.
-        $mapUrls = [];
-        foreach (['mapImageUrl', 'mapUrl'] as $k) {
-            $u = $this->str($legacyCourse, $k, null);
-            if ($u !== null) {
-                $mapUrls[] = $u;
-            }
+        $finishId = \is_array($legacyCourse['finish'] ?? null)
+            ? (string) ($legacyCourse['finish']['id'] ?? '')
+            : '';
+        if ($finishId !== '' && isset($controlsByLegacyId[$finishId])) {
+            $sequence[] = $controlsByLegacyId[$finishId];
         }
+
+        $position = 0;
+        foreach ($sequence as $ctrl) {
+            $cc = new CourseControl($existing, $ctrl, ++$position);
+            $this->em->persist($cc);
+        }
+
+        // Maps — legacy course.maps[].filePath, hosted on cdn.orun.app.
         if (\is_array($legacyCourse['maps'] ?? null)) {
+            $i = 0;
             foreach ($legacyCourse['maps'] as $legacyMap) {
-                if (\is_array($legacyMap) && \is_string($legacyMap['imageUrl'] ?? null)) {
-                    $mapUrls[] = $legacyMap['imageUrl'];
+                if (!\is_array($legacyMap)) {
+                    continue;
                 }
+                $filePath = $this->str($legacyMap, 'filePath', null);
+                if ($filePath === null) {
+                    continue;
+                }
+                $mapUrl = self::MAP_CDN_BASE . ltrim($filePath, '/');
+                $stored = $this->rehostAsset($mapUrl, sprintf(
+                    'events/%s/legacy-map-%s-%d',
+                    $event->getLegacySlug() ?? 'unknown',
+                    $this->slugify($name),
+                    $i,
+                ));
+                if ($stored === null) {
+                    continue;
+                }
+                $map = new Map(
+                    $existing,
+                    sprintf('%s%s', $name, $i > 0 ? sprintf(' — carte %d', $i + 1) : ''),
+                    $stored,
+                );
+                $this->em->persist($map);
+                ++$result['mapsImported'];
+                ++$i;
             }
         }
-        $mapUrls = array_values(array_unique($mapUrls));
-        foreach ($mapUrls as $i => $mapUrl) {
-            $stored = $this->rehostAsset($mapUrl, sprintf(
-                'events/%s/legacy-map-%s-%d',
-                $event->getLegacySlug() ?? 'unknown',
-                $this->slugify($name),
-                $i,
-            ));
-            if ($stored === null) {
-                continue;
-            }
-            $map = new Map(
-                $existing,
-                sprintf('%s%s', $name, $i > 0 ? sprintf(' — carte %d', $i + 1) : ''),
-                $stored,
-            );
-            $this->em->persist($map);
-            ++$result['mapsImported'];
-        }
+    }
+
+    private function controlTypeFromId(string $legacyId): ControlType
+    {
+        $first = strtoupper(substr($legacyId, 0, 1));
+        return match ($first) {
+            'S' => ControlType::Start,
+            'F' => ControlType::Finish,
+            default => ControlType::Control,
+        };
     }
 
     private function mapCourseType(?string $legacy): CourseType
@@ -246,27 +359,64 @@ final class LegacyImporter
     }
 
     /**
-     * @return list<ControlValidationMethod>
+     * Legacy `methods` is a list of `{type, ...extras}` objects. We
+     * project the type onto our enum AND collect any per-method extras
+     * (QR token, iBeacon major/minor, GPS range) into a payload map so
+     * the mobile client can validate against them.
+     *
+     * @param list<mixed> $legacy
+     * @return array{0: list<ControlValidationMethod>, 1: array<string, mixed>}
      */
-    private function mapMethods(mixed $legacy): array
+    private function mapMethods(array $legacy): array
     {
-        if (!\is_array($legacy)) {
-            return [ControlValidationMethod::Gps];
-        }
         $out = [];
+        $payload = [];
         foreach ($legacy as $m) {
-            $method = match (strtolower((string) $m)) {
+            if (!\is_array($m)) {
+                continue;
+            }
+            $t = strtolower((string) ($m['type'] ?? ''));
+            $method = match ($t) {
                 'qr', 'qr_code', 'qrcode' => ControlValidationMethod::QrCode,
                 'nfc' => ControlValidationMethod::Nfc,
                 'ibeacon', 'beacon', 'ble' => ControlValidationMethod::IBeacon,
                 'gps' => ControlValidationMethod::Gps,
                 default => null,
             };
-            if ($method !== null && !\in_array($method, $out, true)) {
-                $out[] = $method;
+            if ($method === null || \in_array($method, $out, true)) {
+                continue;
+            }
+            $out[] = $method;
+            switch ($method) {
+                case ControlValidationMethod::QrCode:
+                    if (isset($m['value'])) {
+                        $payload['qr'] = ['token' => (string) $m['value']];
+                    }
+                    break;
+                case ControlValidationMethod::Gps:
+                    if (isset($m['range']) && \is_numeric($m['range'])) {
+                        $payload['gps'] = ['rangeMeters' => (int) $m['range']];
+                    }
+                    break;
+                case ControlValidationMethod::IBeacon:
+                    $beacon = [];
+                    foreach (['uuid', 'major', 'minor'] as $k) {
+                        if (isset($m[$k])) {
+                            $beacon[$k] = $m[$k];
+                        }
+                    }
+                    if ($beacon !== []) {
+                        $payload['ibeacon'] = $beacon;
+                    }
+                    break;
+                case ControlValidationMethod::Nfc:
+                    if (isset($m['value'])) {
+                        $payload['nfc'] = ['tag' => (string) $m['value']];
+                    }
+                    break;
             }
         }
-        return $out !== [] ? $out : [ControlValidationMethod::Gps];
+        return [$out, $payload];
     }
 
     private function rehostAsset(string $legacyUrl, string $keyPrefix): ?string
@@ -285,41 +435,37 @@ final class LegacyImporter
         }
     }
 
+    /**
+     * @param array<string, mixed> $arr
+     */
     private function str(array $arr, string $key, ?string $default): ?string
     {
         $v = $arr[$key] ?? null;
         return \is_string($v) && $v !== '' ? $v : $default;
     }
 
+    /**
+     * @param array<string, mixed> $arr
+     */
     private function numeric(array $arr, string $key): ?float
     {
         $v = $arr[$key] ?? null;
         return \is_numeric($v) ? (float) $v : null;
     }
 
+    /**
+     * @param array<string, mixed> $arr
+     */
     private function intOrNull(array $arr, string $key): ?int
     {
         $v = $arr[$key] ?? null;
         return \is_numeric($v) ? (int) $v : null;
     }
 
-    private function date(array $arr, string $key): ?\DateTimeImmutable
-    {
-        $v = $arr[$key] ?? null;
-        if (!\is_string($v) || $v === '') {
-            return null;
-        }
-        try {
-            return new \DateTimeImmutable($v);
-        } catch (\Throwable) {
-            return null;
-        }
-    }
-
     private function slugify(string $s): string
     {
-        $s = strtolower(iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s));
-        $s = preg_replace('/[^a-z0-9]+/', '-', (string) $s);
+        $s = strtolower(iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s) ?: $s);
+        $s = preg_replace('/[^a-z0-9]+/', '-', $s);
         return trim((string) $s, '-') ?: 'x';
     }
 }
