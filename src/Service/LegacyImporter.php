@@ -9,11 +9,13 @@ use App\Entity\Course;
 use App\Entity\CourseControl;
 use App\Entity\Event;
 use App\Entity\Map;
+use App\Entity\Tag;
 use App\Entity\User;
 use App\Enum\ControlType;
 use App\Enum\ControlValidationMethod;
 use App\Enum\CourseType;
 use App\Enum\EventType;
+use App\Enum\TagType;
 use App\Repository\EventRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
@@ -145,7 +147,7 @@ final class LegacyImporter
                 if ($legacyId === '') {
                     continue;
                 }
-                $ctrl = $this->buildControl($event, $legacyCtrl);
+                $ctrl = $this->buildControl($event, $legacyCtrl, $actor);
                 $controlsByLegacyId[$legacyId] = $ctrl;
                 $this->em->persist($ctrl);
                 ++$result['controlsCreated'];
@@ -187,13 +189,13 @@ final class LegacyImporter
     /**
      * @param array<string, mixed> $legacyCtrl
      */
-    private function buildControl(Event $event, array $legacyCtrl): Control
+    private function buildControl(Event $event, array $legacyCtrl, User $actor): Control
     {
         $legacyId = (string) ($legacyCtrl['id'] ?? '');
         $type = $this->controlTypeFromId($legacyId);
 
         $methodsRaw = \is_array($legacyCtrl['methods'] ?? null) ? $legacyCtrl['methods'] : [];
-        [$methods, $payload] = $this->mapMethods($methodsRaw);
+        [$methods, $tagsToAttach] = $this->mapMethods($methodsRaw, $actor, $legacyId);
         // A control MUST have at least one validation method — legacy
         // occasionally omits them for start/finish; default to GPS then.
         if ($methods === []) {
@@ -218,8 +220,10 @@ final class LegacyImporter
                 $ctrl->setLongitude($lng);
             }
         }
-        if ($payload !== []) {
-            $ctrl->setPayload($payload);
+
+        foreach ($tagsToAttach as $tag) {
+            $this->em->persist($tag);
+            $ctrl->addTag($tag);
         }
         return $ctrl;
     }
@@ -371,18 +375,19 @@ final class LegacyImporter
     }
 
     /**
-     * Legacy `methods` is a list of `{type, ...extras}` objects. We
-     * project the type onto our enum AND collect any per-method extras
-     * (QR token, iBeacon major/minor, GPS range) into a payload map so
-     * the mobile client can validate against them.
+     * Legacy `methods` is a list of `{type, ...extras}` objects. Project
+     * onto our enum AND materialise the per-method extras as Tag entities
+     * attached to the Control — that's the canonical storage the mobile
+     * app validates against (see app/lib/resolve.ts). Storing on
+     * Control.payload is a legacy shortcut that no client actually reads.
      *
      * @param list<mixed> $legacy
-     * @return array{0: list<ControlValidationMethod>, 1: array<string, mixed>}
+     * @return array{0: list<ControlValidationMethod>, 1: list<Tag>}
      */
-    private function mapMethods(array $legacy): array
+    private function mapMethods(array $legacy, User $actor, string $legacyControlId): array
     {
-        $out = [];
-        $payload = [];
+        $methods = [];
+        $tags = [];
         foreach ($legacy as $m) {
             if (!\is_array($m)) {
                 continue;
@@ -395,40 +400,76 @@ final class LegacyImporter
                 'gps' => ControlValidationMethod::Gps,
                 default => null,
             };
-            if ($method === null || \in_array($method, $out, true)) {
+            if ($method === null || \in_array($method, $methods, true)) {
                 continue;
             }
-            $out[] = $method;
-            switch ($method) {
-                case ControlValidationMethod::QrCode:
-                    if (isset($m['value'])) {
-                        $payload['qr'] = ['token' => (string) $m['value']];
-                    }
-                    break;
-                case ControlValidationMethod::Gps:
-                    if (isset($m['range']) && \is_numeric($m['range'])) {
-                        $payload['gps'] = ['rangeMeters' => (int) $m['range']];
-                    }
-                    break;
-                case ControlValidationMethod::IBeacon:
-                    $beacon = [];
-                    foreach (['uuid', 'major', 'minor'] as $k) {
-                        if (isset($m[$k])) {
-                            $beacon[$k] = $m[$k];
-                        }
-                    }
-                    if ($beacon !== []) {
-                        $payload['ibeacon'] = $beacon;
-                    }
-                    break;
-                case ControlValidationMethod::Nfc:
-                    if (isset($m['value'])) {
-                        $payload['nfc'] = ['tag' => (string) $m['value']];
-                    }
-                    break;
+            $methods[] = $method;
+
+            $tag = $this->tagFromMethod($method, $m, $actor, $legacyControlId);
+            if ($tag !== null) {
+                $tags[] = $tag;
             }
         }
-        return [$out, $payload];
+        return [$methods, $tags];
+    }
+
+    /**
+     * @param array<string, mixed> $m
+     */
+    private function tagFromMethod(ControlValidationMethod $method, array $m, User $actor, string $legacyControlId): ?Tag
+    {
+        $payload = null;
+        $tagType = null;
+        switch ($method) {
+            case ControlValidationMethod::QrCode:
+                $value = $m['value'] ?? null;
+                if (!\is_string($value) || $value === '') {
+                    return null;
+                }
+                $tagType = TagType::QrCode;
+                // Canonical shape (cf. Tag.php doc + app/lib/resolve.ts) :
+                // `payload.code` = raw token, matched against scanned
+                // tail/fragment.
+                $payload = ['code' => $value];
+                break;
+            case ControlValidationMethod::Nfc:
+                $value = $m['value'] ?? $m['uid'] ?? null;
+                if (!\is_string($value) || $value === '') {
+                    return null;
+                }
+                $tagType = TagType::Nfc;
+                $payload = ['uid' => $value];
+                break;
+            case ControlValidationMethod::IBeacon:
+                $beacon = [];
+                foreach (['uuid', 'major', 'minor'] as $k) {
+                    if (isset($m[$k])) {
+                        $beacon[$k] = \is_numeric($m[$k]) ? (int) $m[$k] : (string) $m[$k];
+                    }
+                }
+                if (!isset($beacon['uuid'])) {
+                    return null;
+                }
+                $tagType = TagType::IBeacon;
+                $payload = $beacon;
+                break;
+            case ControlValidationMethod::Gps:
+                // GPS has no physical tag — just a validation rule
+                // (range). Not stored as a Tag; the Control itself
+                // provides lat/lng and the mobile matcher uses a fixed
+                // radius. If the legacy `range` needs to be preserved,
+                // it should go on Control.payload but no reader looks at
+                // it today.
+                return null;
+        }
+
+        if ($tagType === null || $payload === null) {
+            return null;
+        }
+        $tag = new Tag($tagType, sprintf('Legacy %s — %s', $tagType->value, $legacyControlId));
+        $tag->setPayload($payload);
+        $tag->setCreator($actor);
+        return $tag;
     }
 
     private function rehostAsset(string $legacyUrl, string $keyPrefix): ?string
