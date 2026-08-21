@@ -6,6 +6,7 @@ namespace App\Entity;
 
 use ApiPlatform\Doctrine\Orm\Filter\SearchFilter;
 use ApiPlatform\Metadata\ApiFilter;
+use ApiPlatform\Metadata\ApiProperty;
 use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
@@ -62,8 +63,12 @@ class Map
     #[Groups(['map:read'])]
     private ?int $scale = null;
 
+    // IRI string, pas embedded. Voir CourseControl.php pour la
+    // même raison (traits Timestampable partagés déclenchent des
+    // embeddings partiels qui cassent les lookups côté manager).
     #[ORM\ManyToOne(targetEntity: Course::class)]
     #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
+    #[ApiProperty(readableLink: false, writableLink: false)]
     #[Groups(['map:read'])]
     private Course $course;
 

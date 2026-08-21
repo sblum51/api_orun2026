@@ -6,6 +6,7 @@ namespace App\Entity;
 
 use ApiPlatform\Doctrine\Orm\Filter\SearchFilter;
 use ApiPlatform\Metadata\ApiFilter;
+use ApiPlatform\Metadata\ApiProperty;
 use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
@@ -68,15 +69,23 @@ class CourseControl
     #[Groups(['course_control:read', 'course_control:write'])]
     private bool $pairRequired = false;
 
+    // `readableLink: false` force la sortie en IRI string au lieu
+    // d'un objet embedded partiel. Sans ça, les groupes read partagés
+    // via TimestampableTrait (createdAt/updatedAt listés dans
+    // `course_control:read`) déclenchent un embedding de Course/Control
+    // avec seulement 4 champs — et le manager qui compare `cc.control`
+    // à des IRIs strings ne matche plus rien.
     #[ORM\ManyToOne(targetEntity: Course::class, inversedBy: 'courseControls')]
     #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
     #[Assert\NotNull]
+    #[ApiProperty(readableLink: false, writableLink: false)]
     #[Groups(['course_control:read', 'course_control:write'])]
     private ?Course $course = null;
 
     #[ORM\ManyToOne(targetEntity: Control::class)]
     #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
     #[Assert\NotNull]
+    #[ApiProperty(readableLink: false, writableLink: false)]
     #[Groups(['course_control:read', 'course_control:write'])]
     private ?Control $control = null;
 
