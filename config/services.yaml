@@ -31,13 +31,6 @@ services:
             $storage: '@map.storage.local'
             $publicUrlPrefix: '%env(default::MAP_STORAGE_PUBLIC_URL)%'
 
-when@prod:
-    services:
-        App\Service\MapStorage:
-            arguments:
-                $storage: '@map.storage.s3'
-                $publicUrlPrefix: '%env(default::MAP_STORAGE_PUBLIC_URL)%'
-
     # Push notifiers — FCM (Android) + APNs (iOS). Credentials come from
     # env vars, see .env for defaults / expected shape. Missing creds
     # cause the client to throw at send() time; upstream endpoints catch
@@ -63,3 +56,16 @@ when@prod:
             # Unset env => production. Set to `sandbox` while testing
             # with a debug build installed via Xcode.
             $environment: '%env(default:default_apns_env:APNS_ENVIRONMENT)%'
+
+when@prod:
+    services:
+        # Prod override — bascule MapStorage sur S3. Le container FrankenPHP
+        # tourne non-root et `/app/public/uploads` n'est pas writable ; en
+        # prod l'API pousse dans un bucket servi par un CDN (URL exposée via
+        # MAP_STORAGE_PUBLIC_URL). Credentials S3 + bucket configurés via
+        # les env vars AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION
+        # / MAP_STORAGE_BUCKET côté serveur.
+        App\Service\MapStorage:
+            arguments:
+                $storage: '@map.storage.s3'
+                $publicUrlPrefix: '%env(default::MAP_STORAGE_PUBLIC_URL)%'
