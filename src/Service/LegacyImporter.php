@@ -173,17 +173,14 @@ final class LegacyImporter
         $conn->executeStatement(
             'DELETE FROM course_controls WHERE course_id IN (SELECT id FROM courses WHERE event_id = :eid)',
             ['eid' => $event->getId()->toRfc4122()],
-            ['eid' => \PDO::PARAM_STR],
         );
         $conn->executeStatement(
             'DELETE FROM maps WHERE course_id IN (SELECT id FROM courses WHERE event_id = :eid)',
             ['eid' => $event->getId()->toRfc4122()],
-            ['eid' => \PDO::PARAM_STR],
         );
         $conn->executeStatement(
             'DELETE FROM controls WHERE event_id = :eid',
             ['eid' => $event->getId()->toRfc4122()],
-            ['eid' => \PDO::PARAM_STR],
         );
     }
 
