@@ -33,7 +33,11 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[ORM\HasLifecycleCallbacks]
 #[ApiResource(
     operations: [
-        new GetCollection(),
+        // Pagination désactivée : le manager charge la liste complète
+        // filtrée par event et l'utilise comme lookup pour rendre les
+        // course_controls. Avec le défaut à 30, un event >30 postes se
+        // retrouve avec des trous dans l'affichage circuit.
+        new GetCollection(paginationEnabled: false),
         new Get(security: "is_granted('view', object)"),
         new Post(
             security: "is_granted('ROLE_USER')",

@@ -25,7 +25,10 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[ORM\HasLifecycleCallbacks]
 #[ApiResource(
     operations: [
-        new GetCollection(),
+        // Pagination désactivée : le manager charge la séquence
+        // complète d'un circuit filtrée par ?course= pour l'afficher
+        // dans l'ordre. Un circuit >30 postes serait tronqué sinon.
+        new GetCollection(paginationEnabled: false),
         new Get(),
         new Post(
             security: "is_granted('ROLE_USER')",
